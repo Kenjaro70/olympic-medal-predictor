@@ -1,0 +1,30 @@
+{
+  "experiment_name": "rf_deep",
+  "model_type": "random_forest",
+  "params": {
+    "n_estimators": 400,
+    "max_depth": 24,
+    "min_samples_leaf": 2,
+    "class_weight": "balanced",
+    "n_jobs": -1
+  },
+  "metrics": {
+    "accuracy": 0.8450832297214541,
+    "precision": 0.4812333760220668,
+    "recall": 0.6131542613279779,
+    "f1": 0.5392427420245061,
+    "roc_auc": 0.8531989466895018
+  },
+  "run_id": "dfc564de8e2b4c03931d173304e833d5",
+  "selection_metric": "roc_auc",
+  "feature_importances": {
+    "noc_medal_rate": 0.314,
+    "sport_medal_rate": 0.1867,
+    "year": 0.1504,
+    "age": 0.1134,
+    "weight": 0.1088,
+    "height": 0.1031,
+    "sex": 0.0128,
+    "season": 0.0107
+  }
+}

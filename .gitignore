@@ -1,0 +1,19 @@
+# Data and model artifacts stay out of Git (data/sample.csv is the one
+# committed exception — a small sample so tests/CI run without the full data).
+data/*
+!data/sample.csv
+models/*.joblib
+mlruns/
+mlflow.db
+
+# Environments and secrets
+.venv/
+.env
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local scratch
+pip-freeze.txt

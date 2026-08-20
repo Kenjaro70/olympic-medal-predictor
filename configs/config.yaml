@@ -1,0 +1,64 @@
+# Training configuration for the Olympic medal prediction model.
+# All hyperparameters live here — nothing is hardcoded in src/train.py.
+
+data:
+  raw_path: data/raw/olympics.csv
+  description: "120 years of Olympic history (athlete_events), TidyTuesday 2021-07-27 mirror, 271,116 rows"
+  test_size: 0.2
+  random_state: 42
+
+mlflow:
+  tracking_uri: sqlite:///mlflow.db
+  experiment_name: olympic-medal-prediction
+
+output:
+  model_dir: models
+
+# Each entry below becomes one MLflow run. Three different algorithms plus
+# hyperparameter variants -> 6 meaningfully different configurations.
+experiments:
+  - name: logreg_baseline
+    model: logistic_regression
+    params:
+      C: 1.0
+      max_iter: 2000
+      class_weight: balanced
+
+  - name: logreg_strong_reg
+    model: logistic_regression
+    params:
+      C: 0.05
+      max_iter: 2000
+      class_weight: balanced
+
+  - name: rf_shallow
+    model: random_forest
+    params:
+      n_estimators: 200
+      max_depth: 12
+      min_samples_leaf: 5
+      class_weight: balanced
+      n_jobs: -1
+
+  - name: rf_deep
+    model: random_forest
+    params:
+      n_estimators: 400
+      max_depth: 24
+      min_samples_leaf: 2
+      class_weight: balanced
+      n_jobs: -1
+
+  - name: hist_gb_default
+    model: hist_gradient_boosting
+    params:
+      learning_rate: 0.1
+      max_iter: 200
+
+  - name: hist_gb_tuned
+    model: hist_gradient_boosting
+    params:
+      learning_rate: 0.05
+      max_iter: 400
+      max_leaf_nodes: 63
+      l2_regularization: 1.0
