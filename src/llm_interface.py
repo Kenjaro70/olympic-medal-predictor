@@ -23,7 +23,7 @@ import joblib
 from src.preprocess import transform_inference
 
 DEFAULT_BASE_URL = "https://api.studio.nebius.com/v1/"
-DEFAULT_MODEL = "meta-llama/Meta-Llama-3.3-70B-Instruct"
+DEFAULT_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
 MODEL_BUNDLE_PATH = Path("models/model_bundle.joblib")
 
 REQUIRED_FEATURES = ["sex", "age", "noc", "sport"]
