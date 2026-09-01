@@ -1,10 +1,17 @@
-# Data and model artifacts stay out of Git (data/sample.csv is the one
-# committed exception — a small sample so tests/CI run without the full data).
+# Data and model artifacts stay out of Git. Committed exceptions:
+#  - data/sample.csv: small sample so tests/CI run without the full data
+#  - data/raw/.gitkeep: keeps the download target directory on fresh clones
 data/*
 !data/sample.csv
+!data/raw
+data/raw/*
+!data/raw/.gitkeep
 models/*.joblib
 mlruns/
-mlflow.db
+
+# mlflow.db (the SQLite tracking store with all logged runs) IS committed as
+# the experiment-history record; the heavyweight model artifacts in mlruns/
+# stay untracked.
 
 # Environments and secrets
 .venv/

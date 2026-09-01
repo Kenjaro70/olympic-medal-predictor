@@ -1,5 +1,7 @@
 # 🥇 Olympic Medal Predictor
 
+[![CI](https://github.com/Kenjaro70/olympic-medal-predictor/actions/workflows/ci.yml/badge.svg)](https://github.com/Kenjaro70/olympic-medal-predictor/actions/workflows/ci.yml)
+
 An end-to-end intelligent application that predicts an athlete's probability of
 winning an Olympic medal — and lets you ask about it in plain English.
 
@@ -37,6 +39,7 @@ python -m venv .venv
 pip install -r requirements.txt
 
 # Get the data (~35 MB)
+mkdir -p data/raw
 curl -L -o data/raw/olympics.csv https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-07-27/olympics.csv
 
 # Configure the LLM provider (Nebius AI Studio by default)
@@ -54,7 +57,8 @@ and `LLM_MODEL` overrides (see `.env.example`).
 python -m src.train --config configs/config.yaml
 
 # 2. Compare runs and identify the best model programmatically
-python -m src.compare_runs
+#    (--export refreshes the committed run-history files in reports/)
+python -m src.compare_runs --export reports
 
 # 3. Launch the chat interface
 streamlit run src/app.py
@@ -151,6 +155,21 @@ sense: within elite athletes, body metrics don't separate medalists well. The
 model predicts *base rates for an athlete profile*, not individual talent —
 the LLM layer states this caveat in every answer.
 
+### Experiment tracking evidence
+
+The full history of all 6 logged runs is committed to the repository in three
+forms, so it is inspectable without retraining:
+
+- [`reports/experiments.md`](reports/experiments.md) — human-readable table of
+  every run, generated with `mlflow.search_runs()` via
+  `python -m src.compare_runs --export reports`
+- [`reports/experiments.csv`](reports/experiments.csv) — every logged
+  hyperparameter and metric for every run
+- [`mlflow.db`](mlflow.db) — the SQLite MLflow tracking store itself; browse
+  the runs with `mlflow ui --backend-store-uri sqlite:///mlflow.db` (the
+  heavyweight per-run model artifacts in `mlruns/` stay untracked, per the
+  no-model-files-in-Git rule)
+
 ## Testing
 
 ```bash
@@ -166,6 +185,40 @@ pytest tests/ -v
 - `tests/test_interface.py` (6 tests): feature extraction and normalization
   with an injected fake LLM, clarifying questions for incomplete input,
   out-of-scope refusal, and malformed-LLM-output recovery.
+
+The same command runs on every push in GitHub Actions
+([workflow](.github/workflows/ci.yml) — see the CI badge at the top of this
+README for the latest result). Output of `pytest tests/ -v` on a clean run:
+
+<details>
+<summary>pytest tests/ -v — 14 passed</summary>
+
+```text
+============================= test session starts =============================
+platform win32 -- Python 3.13.9, pytest-9.1.1, pluggy-1.6.0
+rootdir: olympic-medal-predictor
+configfile: pytest.ini
+collected 14 items
+
+tests/test_interface.py::test_parse_query_extracts_and_normalizes_features PASSED [  7%]
+tests/test_interface.py::test_incomplete_input_triggers_clarifying_question PASSED [ 14%]
+tests/test_interface.py::test_out_of_scope_query_is_declined PASSED      [ 21%]
+tests/test_interface.py::test_garbage_llm_output_handled_gracefully PASSED [ 28%]
+tests/test_interface.py::test_extract_json_tolerates_code_fences PASSED  [ 35%]
+tests/test_interface.py::test_normalize_rejects_invalid_values PASSED    [ 42%]
+tests/test_model.py::test_predictions_have_correct_type_and_shape PASSED [ 50%]
+tests/test_model.py::test_model_meets_minimum_performance PASSED         [ 57%]
+tests/test_preprocess.py::test_clean_builds_binary_target PASSED         [ 64%]
+tests/test_preprocess.py::test_impute_fills_all_missing_values PASSED    [ 71%]
+tests/test_preprocess.py::test_encode_categoricals_maps_and_handles_unseen PASSED [ 78%]
+tests/test_preprocess.py::test_scale_features_standardizes PASSED        [ 85%]
+tests/test_preprocess.py::test_functions_do_not_mutate_input PASSED      [ 92%]
+tests/test_preprocess.py::test_prepare_datasets_keeps_athletes_separate PASSED [100%]
+
+============================= 14 passed in 9.70s ==============================
+```
+
+</details>
 
 ## Demo script
 
