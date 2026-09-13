@@ -6,17 +6,45 @@ Run with:
 
 import os
 import sys
+import urllib.request
 from pathlib import Path
 
 # Allow `streamlit run src/app.py` from the repo root to find the src package.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+os.chdir(REPO_ROOT)  # model/config paths in the project are repo-relative
 
 import streamlit as st
 from dotenv import load_dotenv
 
-from src.llm_interface import answer, load_bundle
+from src.llm_interface import MODEL_BUNDLE_PATH, answer, load_bundle
 
 load_dotenv()
+
+DATA_URL = (
+    "https://raw.githubusercontent.com/rfordatascience/tidytuesday/"
+    "master/data/2021/2021-07-27/olympics.csv"
+)
+# Trained on first boot when no bundle is present (e.g. on Streamlit
+# Community Cloud, which starts from a bare git clone). hist_gb_tuned is
+# fast to train and produces a compact model that fits cloud memory limits.
+BOOTSTRAP_EXPERIMENT = "hist_gb_tuned"
+
+
+def ensure_model() -> None:
+    """Download the public dataset and train a model if no bundle exists."""
+    if MODEL_BUNDLE_PATH.exists():
+        return
+    from src.train import load_config, run_experiments
+
+    config = load_config("configs/config.yaml")
+    raw_path = Path(config["data"]["raw_path"])
+    if not raw_path.exists():
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        with st.spinner("First run: downloading the Olympic dataset (~36 MB)..."):
+            urllib.request.urlretrieve(DATA_URL, raw_path)
+    with st.spinner("First run: training the medal model (about a minute)..."):
+        run_experiments(config, only=BOOTSTRAP_EXPERIMENT)
 
 st.set_page_config(page_title="Olympic Medal Predictor", page_icon="🥇")
 st.title("🥇 Olympic Medal Predictor")
@@ -28,13 +56,14 @@ st.caption(
 
 @st.cache_resource
 def get_bundle():
+    ensure_model()
     return load_bundle()
 
 
 try:
     bundle = get_bundle()
-except FileNotFoundError as exc:
-    st.error(str(exc))
+except Exception as exc:  # missing bundle, failed download, or training error
+    st.error(f"Could not load or train the model: {exc}")
     st.stop()
 
 with st.sidebar:
