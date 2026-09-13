@@ -117,9 +117,9 @@ athlete id** so the same athlete never appears on both sides.
 **Training** (`src/train.py`): reads all hyperparameters from
 `configs/config.yaml` — six configurations across three algorithms (logistic
 regression, random forest, histogram gradient boosting). Every run logs
-params, data description, five metrics, and the model artifact to MLflow
-(SQLite backend). The best run by ROC AUC is bundled with the preprocessing
-state for the app.
+params, data description, nine metrics, and the model artifact to MLflow
+(SQLite backend). The best run by PR AUC is bundled with the preprocessing
+state and the tuned decision threshold for the app.
 
 **Comparison** (`src/compare_runs.py`): uses `mlflow.search_runs()` to rank
 all runs and print the winner.
@@ -131,34 +131,41 @@ after any change to preprocessing or features.
 
 ## Results
 
-> **Headline: PR-AUC 0.440 on a 2012-2016 holdout (3.04x the 14.5% base rate).**
+> **Headline: PR-AUC 0.437 ± 0.002 on a 2012-2016 holdout (3.02x the 14.5%
+> base rate), mean over three seeds.**
 > An earlier version of this README reported ROC-AUC 0.853 on an
 > athlete-grouped random split. That split was too easy -- see
 > [Honest evaluation](#honest-evaluation) below and
-> [`reports/leakage_ablation.md`](reports/leakage_ablation.md). The table in
-> this section is the old athlete-split result, kept for comparison.
+> [`reports/leakage_ablation.md`](reports/leakage_ablation.md).
 
-Test-set metrics (20% held-out, grouped by athlete; base rate 14.7%):
+Test-set metrics on the 2012–2016 holdout (base rate 14.5%), at the tuned
+decision threshold. Full history in
+[reports/experiments.md](reports/experiments.md):
 
-| run | model | accuracy | precision | recall | f1 | roc_auc |
-|---|---|---|---|---|---|---|
-| **rf_deep** (selected) | random forest | 0.845 | 0.481 | 0.613 | **0.539** | **0.853** |
-| hist_gb_tuned | hist gradient boosting | 0.880 | 0.815 | 0.240 | 0.370 | 0.843 |
-| hist_gb_default | hist gradient boosting | 0.873 | 0.814 | 0.186 | 0.302 | 0.823 |
-| rf_shallow | random forest | 0.711 | 0.303 | 0.737 | 0.429 | 0.804 |
-| logreg_strong_reg | logistic regression | 0.699 | 0.277 | 0.641 | 0.386 | 0.741 |
-| logreg_baseline | logistic regression | 0.699 | 0.277 | 0.641 | 0.386 | 0.741 |
+| run | model | pr_auc | lift | precision | recall | f1 | roc_auc |
+|---|---|---|---|---|---|---|---|
+| **rf_deep** (selected) | random forest | **0.4391** | **3.03x** | 0.576 | 0.219 | 0.317 | 0.790 |
+| rf_shallow | random forest | 0.4134 | 2.85x | 0.625 | 0.127 | 0.211 | 0.781 |
+| hist_gb_tuned | hist gradient boosting | 0.4131 | 2.85x | 0.526 | 0.172 | 0.259 | 0.785 |
+| hist_gb_default | hist gradient boosting | 0.4108 | 2.84x | 0.560 | 0.147 | 0.233 | 0.780 |
+| logreg_strong_reg | logistic regression | 0.2871 | 1.98x | 0.478 | 0.026 | 0.049 | 0.716 |
+| logreg_baseline | logistic regression | 0.2871 | 1.98x | 0.478 | 0.026 | 0.049 | 0.716 |
 
-The boosted models post the highest raw accuracy but do it by rarely
-predicting "medal" (recall ≈ 0.19–0.24) — accuracy is misleading at a 14.7%
-base rate. **rf_deep** is selected: best ROC AUC (0.853) *and* best F1
-(0.539), meaning its probabilities rank athletes best while keeping a sane
-precision/recall balance.
+These are single-run figures at seed 42, which is what the MLflow pipeline
+logs. The headline above quotes 0.437 ± 0.002 because it averages three seeds;
+0.4391 sits inside that interval.
 
-**Model selection:** ROC AUC is the primary metric because the classes are
-imbalanced (~15% positives) and the app surfaces a *probability*, so ranking
-quality matters more than a 0.5-threshold accuracy. Class-weighted models keep
-recall on the rare medal class honest.
+**Model selection:** PR AUC is the primary metric. The classes are imbalanced
+(~14.5% positives), so accuracy is close to meaningless — a model that never
+predicts "medal" scores 85.5% — and ROC AUC stays flattering under imbalance
+in a way average precision does not. The app surfaces a *probability*, so
+ranking quality is what matters; `pr_auc_lift` (PR AUC ÷ base rate) is logged
+beside it, and a value near 1.0 reads immediately as "learned nothing".
+
+`rf_deep` wins on ranking. Note the logistic models collapse to 0.026 recall
+at the tuned threshold: they rank too poorly for a high-precision cut to leave
+anything behind, which is the weakness PR AUC exposes and ROC AUC hid — on the
+old athlete split they looked respectable at 0.741 ROC AUC.
 
 **Findings:** the strongest signals are the country's and sport's historical
 medal rates — powerhouse countries and small-field sports medal far more
@@ -181,26 +188,28 @@ Same model (`rf_deep`), four runs, one variable at a time. These numbers are
 [reports/leakage_ablation.md](reports/leakage_ablation.md) with mean ± sd over
 three seeds:
 
-| split | features | PR-AUC | lift vs base | ROC-AUC | F1 |
-|---|---|---|---|---|---|
-| athlete | original | 0.5744 | 3.89x | 0.8489 | 0.5242 |
-| athlete | + size & missingness | 0.7175 | 4.85x | 0.8927 | 0.6383 |
-| temporal | original | 0.3893 | 2.69x | 0.7637 | 0.3333 |
-| **temporal** | **+ size & missingness** | **0.4396** | **3.04x** | 0.7913 | 0.3702 |
+| split | features | PR-AUC | lift vs base | ROC-AUC |
+|---|---|---|---|---|
+| athlete | original | 0.5888 ± 0.0066 | 3.97x | 0.8548 ± 0.0016 |
+| athlete | + size & missingness | 0.7268 ± 0.0055 | 4.90x | 0.8969 ± 0.0008 |
+| temporal | original | 0.3892 ± 0.0004 | 2.69x | 0.7636 ± 0.0011 |
+| **temporal** | **+ size & missingness** | **0.4366 ± 0.0022** | **3.02x** | 0.7888 ± 0.0012 |
 
-Moving to a temporal holdout costs 0.185 PR-AUC -- the old headline was inflated
-by roughly 47%. Two features were added to stop the model absorbing opportunity
-as skill:
+Moving to a temporal holdout costs **0.200 PR-AUC** -- the old headline was
+inflated by **51%**. The seed spread is an order of magnitude smaller than that
+gap, so it is not resampling noise. Two features were added to stop the model
+absorbing opportunity as skill:
 
 - **`field_size` / `team_size`** -- a team gold produces one medal row per
   athlete (up to 38 for one 1908 gymnastics result), and events with <=8
   entrants medal at 55% vs 12% for fields of 50-100. Together these rank second
-  and fifth in importance (0.150 and 0.099).
+  and fifth in importance (0.149 and 0.102).
 - **`height_missing` / `weight_missing`** -- whether a measurement was recorded
   is era-driven (corr with year -0.65), and within a decade a missing value
   tracks a much lower medal rate (1980s: 15.4% present vs 2.6% missing).
-  Honest caveat: the tree ranks both flags last, because `year` already lets it
-  reconstruct most of the effect. Kept for explicitness, not for lift.
+  Honest caveat: the tree ranks both flags last (0.0058, 0.0055), because
+  `year` already lets it reconstruct most of the effect. Kept for
+  explicitness, not for lift.
 
 **Metric change:** selection is now `pr_auc`, not `roc_auc`. At a 14.5% base
 rate a model that never predicts "medal" scores 85.5% accuracy, and ROC-AUC
@@ -230,15 +239,20 @@ holdout. A four-year window covers 2008 + 2010 -- 18,004 rows, both seasons.
 
 | target precision | threshold | precision | recall | F1 |
 |---|---|---|---|---|
-| none (0.5 cut) | 0.5000 | 0.5395 | 0.2817 | 0.3702 |
-| 0.5 | 0.4369 | 0.4821 | 0.3635 | **0.4145** |
-| **0.6** (default) | 0.5406 | **0.5699** | 0.2379 | 0.3357 |
-| 0.7 | 0.6883 | 0.6448 | 0.1206 | 0.2032 |
+| none (0.5 cut) | 0.5000 | 0.4536 ± 0.0059 | 0.4144 ± 0.0038 | **0.4331** |
+| 0.5 | 0.5430 ± 0.0010 | 0.4927 ± 0.0021 | 0.3526 ± 0.0034 | 0.4110 |
+| **0.6** (default) | 0.6525 ± 0.0025 | **0.5686 ± 0.0069** | 0.2177 ± 0.0032 | 0.3149 |
+| 0.7 | 0.7530 ± 0.0053 | 0.6360 ± 0.0119 | 0.1320 ± 0.0042 | 0.2186 |
+
+At the 0.6 default, precision rises from 0.454 to 0.569 -- a 25% relative gain
+-- and recall falls from 0.414 to 0.218, very nearly half. That is the trade,
+stated plainly.
 
 **The target is approximate, not a guarantee.** Precision on the validation
-slice hits the target almost exactly, but transfer to the holdout costs a few
-points -- asking for 0.70 delivers 0.645. The gap is drift between Olympiads,
-and it widens the harder you push. Treat the target as a dial, not a contract.
+slice lands within 0.001 of the target, but transfer to the holdout costs real
+points: asking for 0.60 delivers 0.569, and asking for 0.70 delivers 0.636. The
+gap is drift between Olympiads, and it widens the harder you push. Treat the
+target as a dial, not a contract.
 
 Note `pr_auc` and `roc_auc` do not appear above: they are threshold-free and
 identical across every row. Moving the threshold cannot make the model rank

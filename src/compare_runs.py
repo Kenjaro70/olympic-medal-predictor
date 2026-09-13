@@ -20,6 +20,10 @@ DISPLAY_COLUMNS = [
     # experiment scored inconsistently. They are not comparable: a temporal
     # holdout is a strictly harder problem than an athlete-grouped one.
     "params.split_strategy",
+    # Two runs of the same model on the same split can differ on
+    # precision/recall purely because the operating point moved. Without
+    # the threshold beside them the table looks self-contradictory.
+    "metrics.threshold",
     "metrics.pr_auc",
     "metrics.pr_auc_lift",
     "metrics.accuracy",
