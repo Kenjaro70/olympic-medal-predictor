@@ -43,7 +43,9 @@ def ensure_model() -> None:
         raw_path.parent.mkdir(parents=True, exist_ok=True)
         with st.spinner("First run: downloading the Olympic dataset (~36 MB)..."):
             urllib.request.urlretrieve(DATA_URL, raw_path)
-    with st.spinner("First run: training the medal model (about a minute)..."):
+    # Training also tunes the decision threshold, which fits one probe model
+    # per walk-forward fold before the final fit -- four fits, not one.
+    with st.spinner("First run: training the medal model (a minute or two)..."):
         run_experiments(config, only=BOOTSTRAP_EXPERIMENT)
 
 st.set_page_config(page_title="Olympic Medal Predictor", page_icon="🥇")
