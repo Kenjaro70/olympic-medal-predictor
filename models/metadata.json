@@ -9,22 +9,37 @@
     "n_jobs": -1
   },
   "metrics": {
-    "accuracy": 0.8450832297214541,
-    "precision": 0.4812333760220668,
-    "recall": 0.6131542613279779,
-    "f1": 0.5392427420245061,
-    "roc_auc": 0.8531989466895018
+    "accuracy": 0.8635829708879647,
+    "precision": 0.576300578034682,
+    "recall": 0.21859241394431045,
+    "f1": 0.31696073756159593,
+    "roc_auc": 0.7900283628550013,
+    "pr_auc": 0.43905228488068165,
+    "pr_auc_lift": 3.0321657359036593,
+    "base_rate": 0.14479824756341472,
+    "threshold": 0.6552022011724241
   },
-  "run_id": "dfc564de8e2b4c03931d173304e833d5",
-  "selection_metric": "roc_auc",
+  "run_id": "06b3664a80ed4501a2b0624b0d8fb15e",
+  "selection_metric": "pr_auc",
+  "decision_threshold": 0.6552022011724241,
+  "threshold_info": {
+    "target_precision": 0.6,
+    "target_met": true,
+    "val_precision": 0.6001669449081803,
+    "val_recall": 0.27998442367601245
+  },
   "feature_importances": {
-    "noc_medal_rate": 0.314,
-    "sport_medal_rate": 0.1867,
-    "year": 0.1504,
-    "age": 0.1134,
-    "weight": 0.1088,
-    "height": 0.1031,
-    "sex": 0.0128,
-    "season": 0.0107
+    "noc_medal_rate": 0.2695,
+    "field_size": 0.1489,
+    "sport_medal_rate": 0.124,
+    "year": 0.1021,
+    "team_size": 0.1015,
+    "age": 0.0833,
+    "weight": 0.072,
+    "height": 0.0682,
+    "sex": 0.0109,
+    "season": 0.0084,
+    "height_missing": 0.0058,
+    "weight_missing": 0.0055
   }
 }

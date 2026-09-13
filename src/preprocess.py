@@ -18,6 +18,15 @@ SEASON_MAP = {"Summer": 0, "Winter": 1}
 
 IMPUTE_COLUMNS = ["age", "height", "weight"]
 
+# Missingness indicators. Whether height/weight were recorded is itself
+# informative: marginally it looks useless (corr with the target is 0.0007),
+# but that is Simpson's paradox -- missingness is driven by era
+# (corr(year, height_missing) = -0.65), and *within* any given decade a
+# missing measurement tracks a much lower medal rate (1980s: 15.4% when
+# present vs 2.6% when missing). Median-filling silently destroys that
+# signal, so the flags are kept as explicit features.
+MISSING_FLAG_COLUMNS = ["height_missing", "weight_missing"]
+
 # Final numeric feature matrix consumed by every model.
 FEATURE_COLUMNS = [
     "sex",
@@ -28,6 +37,10 @@ FEATURE_COLUMNS = [
     "year",
     "noc_medal_rate",
     "sport_medal_rate",
+    "height_missing",
+    "weight_missing",
+    "team_size",
+    "field_size",
 ]
 
 TARGET_COLUMN = "medal_won"
@@ -50,7 +63,36 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     out = out.drop_duplicates()
     out[TARGET_COLUMN] = out["medal"].notna().astype(int)
     out = out[out["sex"].isin(SEX_MAP) & out["season"].isin(SEASON_MAP)]
+
+    # ``year`` is a feature and gets standardized downstream, which makes it
+    # useless for slicing by calendar year afterwards. Keep an untouched copy.
+    out["year_raw"] = out["year"].astype(int)
+
+    # Flags must be computed here, before impute_missing() fills the gaps.
+    for col in ("height", "weight"):
+        out[f"{col}_missing"] = out[col].isna().astype(int)
+
+    out = add_entry_size_features(out)
     return out.reset_index(drop=True)
+
+
+def add_entry_size_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Add roster size and field size for each (games, event) entry.
+
+    A team gold medal produces one medal row per athlete -- up to 38 rows
+    for a single 1908 gymnastics result -- so roster size correlates with
+    the target (r = 0.10) without being skill. Small fields are the mirror
+    image: events with <=8 entrants have a 55% medal rate versus 12% for
+    fields of 50-100. Making both explicit lets the model account for
+    opportunity instead of absorbing it into the athlete features.
+
+    Both are computed from the entry list only (no medal information), so
+    they are safe to derive before the train/test split.
+    """
+    out = df.copy()
+    out["field_size"] = out.groupby(["games", "event"])["id"].transform("size")
+    out["team_size"] = out.groupby(["games", "event", "team"])["id"].transform("size")
+    return out
 
 
 def split_by_athlete(
@@ -67,6 +109,31 @@ def split_by_athlete(
     )
     train_idx, test_idx = next(splitter.split(df, groups=df["id"]))
     return df.iloc[train_idx].copy(), df.iloc[test_idx].copy()
+
+
+def split_by_year(
+    df: pd.DataFrame, holdout_from: int = 2012
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Chronological split: train on <= holdout_from - 1, test on the rest.
+
+    The athlete-grouped split closes athlete leakage but still lets the
+    model train on 2016 to predict 1924, which is not a prediction problem.
+    It also ignores drift in the target itself: the medal rate falls from
+    37.6% in the 1890s to ~14% from the 1960s on, as fields grew. A model
+    scored on a random slice of all eras gets credit for interpolating a
+    trend it would have to extrapolate in real use.
+
+    With the default cutoff this yields ~233.8k train rows (1896-2008) and
+    ~31.5k test rows (2012-2016).
+    """
+    train = df[df["year"] < holdout_from].copy()
+    test = df[df["year"] >= holdout_from].copy()
+    if train.empty or test.empty:
+        raise ValueError(
+            f"holdout_from={holdout_from} leaves an empty split "
+            f"({len(train)} train / {len(test)} test rows)"
+        )
+    return train, test
 
 
 def impute_missing(
@@ -132,15 +199,33 @@ def scale_features(
 
 
 def prepare_datasets(
-    df: pd.DataFrame, test_size: float = 0.2, random_state: int = 42
+    df: pd.DataFrame,
+    test_size: float = 0.2,
+    random_state: int = 42,
+    split_strategy: str = "athlete",
+    holdout_from: int = 2012,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Full preprocessing pipeline: clean, split, fit on train, apply to test.
+
+    ``split_strategy`` selects the holdout:
+
+    - ``"athlete"``: grouped random split, no athlete spans the boundary.
+    - ``"temporal"``: train on games before ``holdout_from``, test on the
+      rest. Harder and more honest -- this is the number to report.
 
     Returns (train, test, artifacts) where ``artifacts`` holds everything
     needed to transform a single inference row identically.
     """
     cleaned = clean(df)
-    train, test = split_by_athlete(cleaned, test_size, random_state)
+    if split_strategy == "temporal":
+        train, test = split_by_year(cleaned, holdout_from)
+    elif split_strategy == "athlete":
+        train, test = split_by_athlete(cleaned, test_size, random_state)
+    else:
+        raise ValueError(
+            f"Unknown split_strategy {split_strategy!r}; "
+            "expected 'athlete' or 'temporal'"
+        )
 
     train, medians = impute_missing(train)
     test, _ = impute_missing(test, medians)
@@ -151,7 +236,17 @@ def prepare_datasets(
     train, scaler = scale_features(train)
     test, _ = scale_features(test, scaler)
 
-    artifacts = {"medians": medians, "encoders": encoders, "scaler": scaler}
+    artifacts = {
+        "entry_size_defaults": {
+            "team_size": float(train["team_size"].median()),
+            "field_size": float(train["field_size"].median()),
+        },
+        "medians": medians,
+        "encoders": encoders,
+        "scaler": scaler,
+        "split_strategy": split_strategy,
+        "holdout_from": holdout_from if split_strategy == "temporal" else None,
+    }
     return train, test, artifacts
 
 
@@ -180,6 +275,22 @@ def transform_inference(features: dict, artifacts: dict) -> pd.DataFrame:
             }
         ]
     )
+
+    # Same flags the training rows carry, read before imputation fills them.
+    for col in ("height", "weight"):
+        row[f"{col}_missing"] = int(
+            features.get(col) is None or pd.isna(features.get(col))
+        )
+
+    # A single inference row has no event field to count, so fall back to the
+    # training medians unless the caller supplied a size explicitly.
+    size_defaults = artifacts.get(
+        "entry_size_defaults", {"team_size": 1.0, "field_size": 1.0}
+    )
+    for col in ("team_size", "field_size"):
+        value = features.get(col)
+        row[col] = size_defaults[col] if value is None else float(value)
+
     row, _ = impute_missing(row, artifacts["medians"])
     if row.loc[0, "year"] is None or pd.isna(row.loc[0, "year"]):
         row["year"] = 2016

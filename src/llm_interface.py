@@ -173,9 +173,13 @@ def predict_from_features(features: dict, bundle: dict) -> dict:
     proba = float(bundle["model"].predict_proba(row)[0, 1])
     known_nocs = bundle["preprocessing"]["encoders"]["noc_rates"]
     known_sports = bundle["preprocessing"]["encoders"]["sport_rates"]
+    # Use the tuned operating point rather than a bare 0.5. Bundles trained
+    # before thresholds existed fall back to 0.5 unchanged.
+    threshold = float(bundle.get("metadata", {}).get("decision_threshold", 0.5))
     return {
         "medal_probability": proba,
-        "prediction": int(proba >= 0.5),
+        "decision_threshold": threshold,
+        "prediction": int(proba >= threshold),
         "noc_known": features.get("noc") in known_nocs,
         "sport_known": features.get("sport") in known_sports,
         "imputed": [

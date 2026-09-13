@@ -1,0 +1,6 @@
+# Keep data files LF in the repo so Windows checkouts stop showing
+# whole-file diffs that contain no actual content change.
+*.csv text eol=lf
+*.py  text eol=lf
+*.md  text eol=lf
+*.yaml text eol=lf

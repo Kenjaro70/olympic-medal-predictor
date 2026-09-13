@@ -37,3 +37,17 @@ def raw_df() -> pd.DataFrame:
     df.loc[df.index[5:15], "height"] = np.nan
     df.loc[df.index[12:20], "weight"] = np.nan
     return df
+
+
+@pytest.fixture
+def multi_year_df(raw_df) -> pd.DataFrame:
+    """Same schema as ``raw_df`` but spread across several Games.
+
+    ``raw_df`` is single-year by design, which cannot exercise a
+    chronological split.
+    """
+    df = raw_df.copy()
+    years = RNG.choice([2000, 2004, 2008, 2012, 2016], size=len(df))
+    df["year"] = years
+    df["games"] = [f"{y} Summer" for y in years]
+    return df

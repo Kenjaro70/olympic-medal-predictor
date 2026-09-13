@@ -16,6 +16,16 @@ import yaml
 DISPLAY_COLUMNS = [
     "tags.mlflow.runName",
     "params.model_type",
+    # Without the split, two runs of the same model look like the same
+    # experiment scored inconsistently. They are not comparable: a temporal
+    # holdout is a strictly harder problem than an athlete-grouped one.
+    "params.split_strategy",
+    # Two runs of the same model on the same split can differ on
+    # precision/recall purely because the operating point moved. Without
+    # the threshold beside them the table looks self-contradictory.
+    "metrics.threshold",
+    "metrics.pr_auc",
+    "metrics.pr_auc_lift",
     "metrics.accuracy",
     "metrics.precision",
     "metrics.recall",
@@ -24,9 +34,22 @@ DISPLAY_COLUMNS = [
 ]
 
 
+def _format_cell(value) -> str:
+    """Format one cell, rendering missing metrics as an em dash.
+
+    Runs logged before a metric existed have NaN for it. Printing "nan"
+    in a results table reads as a broken run rather than an older one.
+    """
+    if value is None:
+        return "—"
+    if isinstance(value, float):
+        return "—" if value != value else f"{value:.4f}"
+    return "—" if str(value) in ("nan", "None", "") else str(value)
+
+
 def to_markdown_table(df) -> str:
     """Render a small dataframe as a GitHub Markdown table (no extra deps)."""
-    cells = df.map(lambda v: f"{v:.4f}" if isinstance(v, float) else str(v))
+    cells = df.map(_format_cell)
     header = "| " + " | ".join(cells.columns) + " |"
     divider = "|" + "|".join("---" for _ in cells.columns) + "|"
     rows = ["| " + " | ".join(row) + " |" for row in cells.to_numpy()]
@@ -60,6 +83,12 @@ def export_runs(runs, table, metric: str, out_dir: str) -> None:
         "the tracking store itself is committed as `mlflow.db` — browse it",
         "with `mlflow ui --backend-store-uri sqlite:///mlflow.db`.",
         "",
+        "Runs marked `athlete (legacy)` pre-date the move to a temporal",
+        "holdout and are NOT comparable with the `temporal` rows — they were",
+        "scored on an easier split and have no `pr_auc` logged. See",
+        "[leakage_ablation.md](leakage_ablation.md) for the like-for-like",
+        "comparison.",
+        "",
         to_markdown_table(table),
         "",
         f"**Best run:** `{best['tags.mlflow.runName']}` "
@@ -89,6 +118,9 @@ def compare(config_path: str, metric: str = "roc_auc", export: str | None = None
 
     cols = [c for c in DISPLAY_COLUMNS if c in runs.columns]
     table = runs[cols].rename(columns=lambda c: c.split(".", 1)[1])
+    if "split_strategy" in table.columns:
+        # Pre-dates the split_strategy param, so it was athlete-grouped.
+        table["split_strategy"] = table["split_strategy"].fillna("athlete (legacy)")
     print(f"All runs, ranked by {metric}:\n")
     print(table.to_string(index=False))
 
@@ -106,7 +138,9 @@ def compare(config_path: str, metric: str = "roc_auc", export: str | None = None
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="configs/config.yaml")
-    parser.add_argument("--metric", default="roc_auc")
+    # Matches SELECTION_METRIC in src/train.py -- ranking by roc_auc would
+    # disagree with the model the pipeline actually bundles.
+    parser.add_argument("--metric", default="pr_auc")
     parser.add_argument(
         "--export",
         default=None,
