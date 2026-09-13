@@ -4,42 +4,48 @@
   "params": {
     "n_estimators": 400,
     "max_depth": 24,
-    "min_samples_leaf": 2,
+    "min_samples_leaf": 10,
     "class_weight": "balanced",
     "n_jobs": -1
   },
   "metrics": {
-    "accuracy": 0.8635829708879647,
-    "precision": 0.576300578034682,
-    "recall": 0.21859241394431045,
-    "f1": 0.31696073756159593,
-    "roc_auc": 0.7900283628550013,
-    "pr_auc": 0.43905228488068165,
-    "pr_auc_lift": 3.0321657359036593,
+    "accuracy": 0.8633289945712562,
+    "precision": 0.5862533692722371,
+    "recall": 0.1907476430607323,
+    "f1": 0.2878411910669975,
+    "roc_auc": 0.79475955318415,
+    "pr_auc": 0.44351063164091253,
+    "pr_auc_lift": 3.062955796109867,
     "base_rate": 0.14479824756341472,
-    "threshold": 0.6552022011724241
+    "threshold": 0.7169968362922474
   },
-  "run_id": "06b3664a80ed4501a2b0624b0d8fb15e",
+  "run_id": "8d5b912b39494580ba041e6b2151fa55",
   "selection_metric": "pr_auc",
-  "decision_threshold": 0.6552022011724241,
+  "decision_threshold": 0.7169968362922474,
   "threshold_info": {
     "target_precision": 0.6,
     "target_met": true,
-    "val_precision": 0.6001669449081803,
-    "val_recall": 0.27998442367601245
+    "val_precision": 0.6000752445447705,
+    "val_recall": 0.21050547710175532,
+    "n_folds": 3,
+    "n_val_rows": 53759,
+    "fold_precision_min": 0.5441919191919192,
+    "fold_precision_max": 0.6392638036809816,
+    "fold_precision_spread": 0.09507188448906234,
+    "fold_precision_n": 3
   },
   "feature_importances": {
-    "noc_medal_rate": 0.2695,
-    "field_size": 0.1489,
-    "sport_medal_rate": 0.124,
-    "year": 0.1021,
-    "team_size": 0.1015,
-    "age": 0.0833,
-    "weight": 0.072,
-    "height": 0.0682,
-    "sex": 0.0109,
-    "season": 0.0084,
-    "height_missing": 0.0058,
-    "weight_missing": 0.0055
+    "noc_medal_rate": 0.3145,
+    "sport_medal_rate": 0.1497,
+    "field_size": 0.14,
+    "team_size": 0.1222,
+    "year": 0.0912,
+    "age": 0.0531,
+    "weight": 0.0516,
+    "height": 0.0468,
+    "sex": 0.0098,
+    "season": 0.0092,
+    "height_missing": 0.0062,
+    "weight_missing": 0.0057
   }
 }

@@ -14,16 +14,23 @@ comparison.
 
 | mlflow.runName | model_type | split_strategy | threshold | pr_auc | pr_auc_lift | accuracy | precision | recall | f1 | roc_auc |
 |---|---|---|---|---|---|---|---|---|---|---|
+| rf_deep | random_forest | temporal | 0.7170 | 0.4435 | 3.0630 | 0.8633 | 0.5863 | 0.1907 | 0.2878 | 0.7948 |
+| rf_lean | random_forest | temporal | 0.7223 | 0.4409 | 3.0452 | 0.8625 | 0.5809 | 0.1802 | 0.2751 | 0.7928 |
 | rf_deep | random_forest | temporal | 0.6552 | 0.4391 | 3.0322 | 0.8636 | 0.5763 | 0.2186 | 0.3170 | 0.7900 |
 | rf_deep | random_forest | temporal | — | 0.4391 | 3.0322 | 0.8446 | 0.4599 | 0.4188 | 0.4384 | 0.7900 |
+| rf_shallow | random_forest | temporal | 0.7464 | 0.4134 | 2.8547 | 0.8629 | 0.6531 | 0.1127 | 0.1922 | 0.7808 |
 | rf_shallow | random_forest | temporal | 0.7385 | 0.4134 | 2.8547 | 0.8626 | 0.6253 | 0.1269 | 0.2110 | 0.7808 |
 | rf_shallow | random_forest | temporal | — | 0.4134 | 2.8547 | 0.7339 | 0.3060 | 0.6606 | 0.4183 | 0.7808 |
+| hist_gb_tuned | hist_gradient_boosting | temporal | 0.4885 | 0.4131 | 2.8528 | 0.8586 | 0.5423 | 0.1519 | 0.2374 | 0.7847 |
 | hist_gb_tuned | hist_gradient_boosting | temporal | 0.4545 | 0.4131 | 2.8528 | 0.8576 | 0.5258 | 0.1719 | 0.2591 | 0.7847 |
 | hist_gb_tuned | hist_gradient_boosting | temporal | — | 0.4131 | 2.8528 | 0.8588 | 0.5470 | 0.1456 | 0.2300 | 0.7847 |
+| hist_gb_default | hist_gradient_boosting | temporal | 0.5000 | 0.4108 | 2.8368 | 0.8622 | 0.6136 | 0.1309 | 0.2158 | 0.7804 |
 | hist_gb_default | hist_gradient_boosting | temporal | 0.4551 | 0.4108 | 2.8368 | 0.8597 | 0.5596 | 0.1471 | 0.2330 | 0.7804 |
 | hist_gb_default | hist_gradient_boosting | temporal | — | 0.4108 | 2.8368 | 0.8622 | 0.6136 | 0.1309 | 0.2158 | 0.7804 |
+| logreg_strong_reg | logistic_regression | temporal | 0.8636 | 0.2871 | 1.9830 | 0.8550 | 0.4776 | 0.0140 | 0.0273 | 0.7162 |
 | logreg_strong_reg | logistic_regression | temporal | 0.8314 | 0.2871 | 1.9830 | 0.8549 | 0.4776 | 0.0257 | 0.0487 | 0.7162 |
 | logreg_strong_reg | logistic_regression | temporal | — | 0.2871 | 1.9830 | 0.7595 | 0.2924 | 0.4652 | 0.3591 | 0.7162 |
+| logreg_baseline | logistic_regression | temporal | 0.8638 | 0.2871 | 1.9830 | 0.8550 | 0.4776 | 0.0140 | 0.0273 | 0.7162 |
 | logreg_baseline | logistic_regression | temporal | 0.8315 | 0.2871 | 1.9830 | 0.8549 | 0.4776 | 0.0257 | 0.0487 | 0.7162 |
 | logreg_baseline | logistic_regression | temporal | — | 0.2871 | 1.9830 | 0.7594 | 0.2922 | 0.4652 | 0.3590 | 0.7162 |
 | hist_gb_tuned | hist_gradient_boosting | athlete (legacy) | — | — | — | 0.8795 | 0.8148 | 0.2396 | 0.3703 | 0.8427 |
@@ -33,4 +40,4 @@ comparison.
 | logreg_strong_reg | logistic_regression | athlete (legacy) | — | — | — | 0.6992 | 0.2766 | 0.6408 | 0.3864 | 0.7414 |
 | logreg_baseline | logistic_regression | athlete (legacy) | — | — | — | 0.6992 | 0.2766 | 0.6406 | 0.3864 | 0.7414 |
 
-**Best run:** `rf_deep` (run_id `06b3664a80ed4501a2b0624b0d8fb15e`) with pr_auc=0.4391
+**Best run:** `rf_deep` (run_id `8d5b912b39494580ba041e6b2151fa55`) with pr_auc=0.4435

@@ -22,7 +22,7 @@ Built as the capstone for the TripleTen AI/ML Engineering Bootcamp.
 
 **This project's reported score went down, on purpose.**
 
-It used to report ROC-AUC 0.853. It now reports PR-AUC 0.437 / ROC-AUC 0.789.
+It used to report ROC-AUC 0.853. It now reports PR-AUC 0.443 / ROC-AUC 0.794.
 Nothing regressed — the old number was measured wrong, and finding that was
 the most useful thing this project did.
 
@@ -32,7 +32,7 @@ and the medal rate drifts sharply over that span (37.6% in the 1890s down to
 ~14% from the 1960s on, as fields grew). A random slice of every era rewards
 interpolating a trend that deployment would force you to extrapolate. Scored
 the honest way — train on ≤ 2008, test on 2012–2016 — the same model loses
-**0.200 PR-AUC**, meaning the old figure was inflated by **51%**.
+**0.164 PR-AUC**, meaning the old figure was inflated by **42%**.
 
 The metric changed too. At a 14.5% base rate, a model that never predicts
 "medal" is 85.5% accurate, and ROC-AUC stays flattering under imbalance.
@@ -157,7 +157,7 @@ after any change to preprocessing or features.
 
 ## Results
 
-> **Headline: PR-AUC 0.437 ± 0.002 on a 2012-2016 holdout (3.02x the 14.5%
+> **Headline: PR-AUC 0.443 ± 0.001 on a 2012-2016 holdout (3.06x the 14.5%
 > base rate), mean over three seeds.**
 > An earlier version of this README reported ROC-AUC 0.853 on an
 > athlete-grouped random split. That split was too easy -- see
@@ -170,16 +170,19 @@ decision threshold. Full history in
 
 | run | model | pr_auc | lift | precision | recall | f1 | roc_auc |
 |---|---|---|---|---|---|---|---|
-| **rf_deep** (selected) | random forest | **0.4391** | **3.03x** | 0.576 | 0.219 | 0.317 | 0.790 |
-| rf_shallow | random forest | 0.4134 | 2.85x | 0.625 | 0.127 | 0.211 | 0.781 |
-| hist_gb_tuned | hist gradient boosting | 0.4131 | 2.85x | 0.526 | 0.172 | 0.259 | 0.785 |
-| hist_gb_default | hist gradient boosting | 0.4108 | 2.84x | 0.560 | 0.147 | 0.233 | 0.780 |
-| logreg_strong_reg | logistic regression | 0.2871 | 1.98x | 0.478 | 0.026 | 0.049 | 0.716 |
-| logreg_baseline | logistic regression | 0.2871 | 1.98x | 0.478 | 0.026 | 0.049 | 0.716 |
+| **rf_deep** (selected) | random forest | **0.4435** | **3.06x** | 0.586 | 0.191 | 0.288 | 0.795 |
+| rf_lean | random forest | 0.4409 | 3.05x | 0.581 | 0.180 | 0.275 | 0.793 |
+| rf_shallow | random forest | 0.4134 | 2.85x | 0.653 | 0.113 | 0.192 | 0.781 |
+| hist_gb_tuned | hist gradient boosting | 0.4131 | 2.85x | 0.542 | 0.152 | 0.237 | 0.785 |
+| hist_gb_default | hist gradient boosting | 0.4108 | 2.84x | 0.614 | 0.131 | 0.216 | 0.780 |
+| logreg_strong_reg | logistic regression | 0.2871 | 1.98x | 0.478 | 0.014 | 0.027 | 0.716 |
+| logreg_baseline | logistic regression | 0.2871 | 1.98x | 0.478 | 0.014 | 0.027 | 0.716 |
 
 These are single-run figures at seed 42, which is what the MLflow pipeline
-logs. The headline above quotes 0.437 ± 0.002 because it averages three seeds;
-0.4391 sits inside that interval.
+logs, each scored at its own tuned threshold. The headline quotes
+0.443 ± 0.001 because it averages three seeds; 0.4435 sits inside that
+interval. `rf_lean` trails `rf_deep` by 0.0026 for half the trees — see
+[Model size](#model-size).
 
 **Model selection:** PR AUC is the primary metric. The classes are imbalanced
 (~14.5% positives), so accuracy is close to meaningless — a model that never
@@ -188,7 +191,7 @@ in a way average precision does not. The app surfaces a *probability*, so
 ranking quality is what matters; `pr_auc_lift` (PR AUC ÷ base rate) is logged
 beside it, and a value near 1.0 reads immediately as "learned nothing".
 
-`rf_deep` wins on ranking. Note the logistic models collapse to 0.026 recall
+`rf_deep` wins on ranking. Note the logistic models collapse to 0.014 recall
 at the tuned threshold: they rank too poorly for a high-precision cut to leave
 anything behind, which is the weakness PR AUC exposes and ROC AUC hid — on the
 old athlete split they looked respectable at 0.741 ROC AUC.
@@ -216,24 +219,25 @@ three seeds:
 
 | split | features | PR-AUC | lift vs base | ROC-AUC |
 |---|---|---|---|---|
-| athlete | original | 0.5888 ± 0.0066 | 3.97x | 0.8548 ± 0.0016 |
-| athlete | + size & missingness | 0.7268 ± 0.0055 | 4.90x | 0.8969 ± 0.0008 |
-| temporal | original | 0.3892 ± 0.0004 | 2.69x | 0.7636 ± 0.0011 |
-| **temporal** | **+ size & missingness** | **0.4366 ± 0.0022** | **3.02x** | 0.7888 ± 0.0012 |
+| athlete | original | 0.5508 ± 0.0072 | 3.71x | 0.8406 ± 0.0029 |
+| athlete | + size & missingness | 0.6696 ± 0.0059 | 4.51x | 0.8801 ± 0.0010 |
+| temporal | original | 0.3866 ± 0.0002 | 2.67x | 0.7645 ± 0.0004 |
+| **temporal** | **+ size & missingness** | **0.4434 ± 0.0009** | **3.06x** | 0.7944 ± 0.0004 |
 
-Moving to a temporal holdout costs **0.200 PR-AUC** -- the old headline was
-inflated by **51%**. The seed spread is an order of magnitude smaller than that
-gap, so it is not resampling noise. Two features were added to stop the model
+Moving to a temporal holdout costs **0.164 PR-AUC** -- the old headline was
+inflated by **42%**. The seed spread is two orders of magnitude smaller than
+that gap, so it is not resampling noise. Two features were added to stop the model
 absorbing opportunity as skill:
 
 - **`field_size` / `team_size`** -- a team gold produces one medal row per
   athlete (up to 38 for one 1908 gymnastics result), and events with <=8
   entrants medal at 55% vs 12% for fields of 50-100. Together these rank second
-  and fifth in importance (0.149 and 0.102).
+  **third and fourth** in importance (0.140 and 0.122), behind only country
+  and sport medal rate.
 - **`height_missing` / `weight_missing`** -- whether a measurement was recorded
   is era-driven (corr with year -0.65), and within a decade a missing value
   tracks a much lower medal rate (1980s: 15.4% present vs 2.6% missing).
-  Honest caveat: the tree ranks both flags last (0.0058, 0.0055), because
+  Honest caveat: the tree ranks both flags last (0.0062, 0.0057), because
   `year` already lets it reconstruct most of the effect. Kept for
   explicitness, not for lift.
 
@@ -264,10 +268,14 @@ pooled (`validation_folds`) -- 2007-2010, 2003-2006, 1999-2002, ~18k rows each
 -- rather than one. A threshold picked on a single window is fitted to one era
 transition; pooling averages over three.
 
-That helps, but it does not make the target exact. Measured on `rf_shallow`,
-pooling cut the mean absolute miss from 0.047 to 0.039. The residual is real
-drift between Olympiads, not a bias that can be subtracted, so the pipeline
-reports it instead of hiding it: every run logs `fold_precision_spread`, the
+That helps materially. Against a single tuning window, pooling cut the miss at
+target 0.6 from 0.031 to 0.014 and at target 0.7 from 0.064 to 0.023 -- mean
+absolute miss across the three targets falls from 0.034 to 0.022.
+
+It does not make the target exact, and it cannot: the residual is real drift
+between Olympiads, not a bias that can be subtracted. The direction is not even
+stable, since `rf_shallow` overshoots its target where `rf_deep` falls short.
+So the pipeline reports the uncertainty instead of hiding it: every run logs `fold_precision_spread`, the
 range of precision the chosen threshold achieved across the three tuning
 windows. That spread widens as the target rises -- fewer positives define a
 higher bar -- and it is the honest width of the estimate. Treat the target as
@@ -276,22 +284,26 @@ a dial and the spread as the error bar.
 `rf_deep` on the 2012-2016 holdout (also regenerated by
 `python -m scripts.report_numbers`):
 
-| target precision | threshold | precision | recall | F1 |
-|---|---|---|---|---|
-| none (0.5 cut) | 0.5000 | 0.4536 ± 0.0059 | 0.4144 ± 0.0038 | **0.4331** |
-| 0.5 | 0.5430 ± 0.0010 | 0.4927 ± 0.0021 | 0.3526 ± 0.0034 | 0.4110 |
-| **0.6** (default) | 0.6525 ± 0.0025 | **0.5686 ± 0.0069** | 0.2177 ± 0.0032 | 0.3149 |
-| 0.7 | 0.7530 ± 0.0053 | 0.6360 ± 0.0119 | 0.1320 ± 0.0042 | 0.2186 |
+| target precision | threshold | precision | recall | miss | fold spread |
+|---|---|---|---|---|---|
+| none (0.5 cut) | 0.5000 | 0.3648 ± 0.0010 | 0.5760 ± 0.0036 | — | 0.026 |
+| 0.5 | 0.6503 ± 0.0023 | 0.5279 ± 0.0046 | 0.3072 ± 0.0082 | −0.028 | 0.053 |
+| **0.6** (default) | 0.7183 ± 0.0020 | **0.5862 ± 0.0030** | 0.1891 ± 0.0068 | **+0.014** | 0.104 |
+| 0.7 | 0.8022 ± 0.0064 | 0.6773 ± 0.0117 | 0.1037 ± 0.0025 | +0.023 | 0.201 |
 
-At the 0.6 default, precision rises from 0.454 to 0.569 -- a 25% relative gain
--- and recall falls from 0.414 to 0.218, very nearly half. That is the trade,
-stated plainly.
+At the 0.6 default, precision rises from 0.365 to 0.586 -- a **61% relative
+gain** -- and recall falls from 0.576 to 0.189. That is the trade, stated
+plainly.
 
-**The target is approximate, not a guarantee.** Precision on the validation
-slice lands within 0.001 of the target, but transfer to the holdout costs real
-points: asking for 0.60 delivers 0.569, and asking for 0.70 delivers 0.636. The
-gap is drift between Olympiads, and it widens the harder you push. Treat the
-target as a dial, not a contract.
+**The target is close but not exact, and the spread says how close.** "Miss"
+is the target minus what the holdout delivered; positive means falling short.
+Pooling three windows keeps it inside ±0.03 across all three targets. "Fold
+spread" is the range the same threshold achieved across the tuning windows,
+and it is the number to trust: at target 0.6 the folds ranged 0.544–0.639 and
+the holdout landed at 0.586, **inside the predicted range**. Note how the
+spread widens as the target rises -- at 0.7 it is 0.201, meaning that
+operating point is barely estimable from this much data. Read the spread as
+the error bar, not the target as a promise.
 
 Note `pr_auc` and `roc_auc` do not appear above: they are threshold-free and
 identical across every row. Moving the threshold cannot make the model rank
@@ -306,18 +318,23 @@ temporal holdout:
 | config | PR-AUC | uncompressed | compressed |
 |---|---|---|---|
 | 400 trees, leaf 2 (original) | 0.4396 | 1135.8 MB | 307.0 MB |
-| 400 trees, leaf 10 (`rf_deep`) | 0.4433 | 427.0 MB | 154.3 MB |
-| **200 trees, leaf 10 (`rf_lean`)** | **0.4416** | 213.9 MB | **77.3 MB** |
-| 400 trees, leaf 16 deep | 0.4360 | 222.9 MB | 87.5 MB |
+| **400 trees, leaf 10** (`rf_deep`, selected) | **0.4435** | 427.0 MB | 154.3 MB |
+| 200 trees, leaf 10 (`rf_lean`) | 0.4409 | 213.9 MB | 77.3 MB |
+| 400 trees, depth 16, leaf 10 | 0.4360 | 222.9 MB | 87.5 MB |
 | 400 trees, leaf 25 | 0.4352 | 209.8 MB | 88.5 MB |
 
-`rf_lean` is **14x smaller than the original for the same accuracy** -- the
-PR-AUC differences across the top three rows are inside the ±0.002 seed
-spread, so treat them as a wash rather than a real gain. Bundles are now
-written with `compress=3`, which costs a few seconds of load time.
+The committed bundle is now **114 MB**, down from **1.2 GB** — an 11x
+reduction that also *improved* PR-AUC, from 0.4396 to 0.4435. Raising
+`min_samples_leaf` was strictly free: the extra size was memorized
+near-singleton leaves, not signal.
 
-A 1.1 GB artifact cannot go in a container image and is awkward to move at
-all; it was pure overfitting, and nothing was paid to remove it.
+`rf_lean` is offered as a deployment option — 0.0026 PR-AUC behind `rf_deep`
+for half the trees and half the file. Pick it if the artifact has to fit
+somewhere; the gap is small but, at a ±0.001 seed spread, real rather than
+noise.
+
+Bundles serialize with `compress=3`, costing a few seconds of load time. A
+1.1 GB artifact cannot go in a container image and is awkward to move at all.
 
 ### Experiment tracking evidence
 
