@@ -77,3 +77,51 @@ def test_evaluate_model_respects_threshold(separable):
 def test_evaluate_model_defaults_to_half(separable):
     y, proba = separable
     assert evaluate_model(_FakeModel(proba), None, y)["threshold"] == DEFAULT_THRESHOLD
+
+
+def test_pooling_folds_concatenates_in_order():
+    from src.evaluate import pool_fold_predictions
+
+    y, proba = pool_fold_predictions(
+        [([0, 1], [0.1, 0.9]), ([1, 0, 1], [0.8, 0.2, 0.7])]
+    )
+    assert list(y) == [0, 1, 1, 0, 1]
+    assert list(proba) == pytest.approx([0.1, 0.9, 0.8, 0.2, 0.7])
+
+
+def test_pooling_rejects_no_folds():
+    from src.evaluate import pool_fold_predictions
+
+    with pytest.raises(ValueError, match="no folds"):
+        pool_fold_predictions([])
+
+
+def test_stability_reports_spread_across_folds():
+    from src.evaluate import threshold_stability
+
+    # Fold 1 is clean at this cut, fold 2 is not -- the spread must show it.
+    folds = [
+        ([1, 1, 0], [0.9, 0.8, 0.1]),
+        ([1, 0, 0], [0.9, 0.8, 0.1]),
+    ]
+    info = threshold_stability(folds, threshold=0.5)
+    assert info["fold_precision_max"] == pytest.approx(1.0)
+    assert info["fold_precision_min"] == pytest.approx(0.5)
+    assert info["fold_precision_spread"] == pytest.approx(0.5)
+    assert info["fold_precision_n"] == 2
+
+
+def test_stability_skips_folds_selecting_nothing():
+    from src.evaluate import threshold_stability
+
+    folds = [([1, 0], [0.9, 0.1]), ([1, 0], [0.2, 0.1])]
+    info = threshold_stability(folds, threshold=0.5)
+    # Second fold predicts no positives: precision is undefined, not zero.
+    assert info["fold_precision_n"] == 1
+    assert info["fold_precision_min"] == pytest.approx(1.0)
+
+
+def test_stability_with_no_usable_fold_is_empty():
+    from src.evaluate import threshold_stability
+
+    assert threshold_stability([([1, 0], [0.1, 0.2])], threshold=0.9) == {}

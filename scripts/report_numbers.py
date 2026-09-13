@@ -26,14 +26,19 @@ import pandas as pd
 import sklearn
 import yaml
 
-from src.evaluate import choose_threshold, evaluate_model
+from src.evaluate import (
+    choose_threshold,
+    evaluate_model,
+    pool_fold_predictions,
+    threshold_stability,
+)
 from src.preprocess import (
     FEATURE_COLUMNS,
     features_target,
     load_raw,
     prepare_datasets,
 )
-from src.train import build_model
+from src.train import build_model, build_walk_forward_folds
 
 # The feature set as it stood before this work, for the ablation's "before".
 LEGACY_FEATURES = [
@@ -80,7 +85,8 @@ def run_ablation(raw, model_cfg: dict, seeds: list[int], holdout_from: int) -> l
 
 
 def run_operating_point(
-    raw, model_cfg: dict, seeds: list[int], holdout_from: int, window: int
+    raw, model_cfg: dict, seeds: list[int], holdout_from: int, window: int,
+    n_folds: int
 ) -> list[dict]:
     """Threshold sweep, tuned on a validation slice inside the training range."""
     rows = []
@@ -88,13 +94,13 @@ def run_operating_point(
         train, test, _ = prepare_datasets(
             raw, 0.2, seed, split_strategy="temporal", holdout_from=holdout_from
         )
-        val_from = int(train["year_raw"].max()) - window + 1
-        fit_part = train[train["year_raw"] < val_from]
-        val_part = train[train["year_raw"] >= val_from]
-
-        probe = _fit(model_cfg, *features_target(fit_part), seed)
-        Xv, yv = features_target(val_part)
-        proba_val = probe.predict_proba(Xv)[:, 1]
+        folds = build_walk_forward_folds(train, window, n_folds)
+        scored = []
+        for _lo, _hi, fit_part, val_part in folds:
+            probe = _fit(model_cfg, *features_target(fit_part), seed)
+            Xv, yv = features_target(val_part)
+            scored.append((yv, probe.predict_proba(Xv)[:, 1]))
+        y_pool, proba_pool = pool_fold_predictions(scored)
 
         final = _fit(model_cfg, *features_target(train), seed)
         Xte, yte = features_target(test)
@@ -103,13 +109,22 @@ def run_operating_point(
             if target is None:
                 threshold, info = 0.5, {}
             else:
-                threshold, info = choose_threshold(yv, proba_val, target)
+                threshold, info = choose_threshold(y_pool, proba_pool, target)
             m = evaluate_model(final, Xte, yte, threshold=threshold)
-            m.update(target=target, seed=seed, val_rows=len(val_part),
-                     val_from=val_from, **{f"val_{k}": v for k, v in info.items()})
+            stability = threshold_stability(scored, threshold)
+            # How far the holdout landed from what was asked for. Signed, so
+            # the direction of the miss is visible, not just its size.
+            m["target_shortfall"] = (
+                target - m["precision"] if target is not None else float("nan")
+            )
+            m.update(target=target, seed=seed, n_folds=len(folds),
+                     val_rows=len(y_pool),
+                     **{f"val_{k}": v for k, v in info.items()},
+                     **stability)
             rows.append(m)
             print(f"  target={str(target):5s} seed={seed:<4d} thr={threshold:.4f} "
-                  f"precision={m['precision']:.4f} recall={m['recall']:.4f}", flush=True)
+                  f"precision={m['precision']:.4f} recall={m['recall']:.4f}",
+                  flush=True)
     return rows
 
 
@@ -126,7 +141,12 @@ def _table(df: pd.DataFrame, group: list[str], cols: list[str]) -> str:
     lines = [header, divider]
     for key, g in df.groupby(group, sort=False):
         key = key if isinstance(key, tuple) else (key,)
-        cells = [str(k) for k in key] + [_agg(list(g[c].dropna())) for c in cols]
+        cells = [str(k) for k in key]
+        for c in cols:
+            values = list(g[c].dropna())
+            # A metric can be undefined for a whole row -- target_shortfall
+            # has no meaning for the untuned 0.5 cut. Render it, don't crash.
+            cells.append(_agg(values) if values else "—")
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
@@ -152,7 +172,10 @@ def main() -> None:
     print(f"Ablation ({args.model}, seeds {seeds}):", flush=True)
     ablation = run_ablation(raw, model_cfg, seeds, holdout_from)
     print(f"\nOperating point ({args.model}):", flush=True)
-    operating = run_operating_point(raw, model_cfg, seeds, holdout_from, window)
+    n_folds = int(data_cfg.get("validation_folds", 3))
+    operating = run_operating_point(
+        raw, model_cfg, seeds, holdout_from, window, n_folds
+    )
     elapsed = time.time() - started
 
     out = Path(args.out)
@@ -198,18 +221,26 @@ missing).
 
 ## Operating point
 
-Threshold tuned on the last {window} calendar years inside the training range
-(never on the test set), maximizing recall subject to the precision floor.
+Threshold tuned on {n_folds} pooled walk-forward windows of {window} calendar
+years each, all inside the training range (never on the test set), maximizing
+recall subject to the precision floor.
 
-{_table(op, ["target"], ["threshold", "precision", "recall", "f1", "accuracy"])}
+`target_shortfall` is target precision minus what the holdout actually
+delivered -- positive means the model fell short. `fold_precision_spread` is
+the range across the tuning windows: the honest width of the estimate.
+
+{_table(op, ["target"], ["threshold", "precision", "recall", "f1", "target_shortfall", "fold_precision_spread"])}
 
 `pr_auc` and `roc_auc` are omitted here: they are threshold-free and identical
 across every row. Moving the threshold cannot improve ranking, only trade
 precision against recall along the curve the model already has.
 
-The target is a dial, not a contract -- it is met on the validation slice but
-transfer to the holdout costs a few points, and the gap widens the harder it
-is pushed.
+The target is a dial, not a contract. It is met on the pooled tuning windows
+by construction, but a future Games is a different population, so the holdout
+lands nearby rather than exactly on it -- in either direction. Note how
+`fold_precision_spread` widens as the target rises: the higher the bar, the
+fewer positives define it, and the less reliable the estimate becomes. Read
+the spread as the realistic range, not the target.
 """
     (out / "leakage_ablation.md").write_text(body, encoding="utf-8")
     print(f"\nWrote {out / 'leakage_ablation.md'} (+ .csv, .json) in "

@@ -32,6 +32,20 @@ METRIC_NAMES = [
 ]
 
 
+def pool_fold_predictions(folds: list[tuple]) -> tuple["np.ndarray", "np.ndarray"]:
+    """Concatenate (y_true, proba) pairs from several walk-forward folds.
+
+    Choosing a threshold on a single validation window tunes it to one
+    era transition. Pooling several transitions averages over drift
+    instead of fitting the most recent one.
+    """
+    if not folds:
+        raise ValueError("no folds supplied")
+    y = np.concatenate([np.asarray(f[0]) for f in folds])
+    proba = np.concatenate([np.asarray(f[1]) for f in folds])
+    return y, proba
+
+
 def choose_threshold(
     y_true, proba, target_precision: float = 0.6
 ) -> tuple[float, dict[str, float]]:
@@ -67,6 +81,31 @@ def choose_threshold(
         "target_met": met,
         "val_precision": float(precision[idx]),
         "val_recall": float(recall[idx]),
+    }
+
+
+def threshold_stability(folds: list[tuple], threshold: float) -> dict[str, float]:
+    """Precision each fold actually achieves at ``threshold``.
+
+    Pooling folds picks a better operating point but cannot make the target
+    exact: precision on a future Games still drifts. Measuring the spread
+    across past transitions turns that into a stated range instead of a
+    promise the model cannot keep. Folds where the threshold selects nothing
+    are skipped -- undefined precision, not zero.
+    """
+    per_fold = []
+    for y_true, proba in folds:
+        selected = np.asarray(proba) >= threshold
+        if selected.sum() == 0:
+            continue
+        per_fold.append(float(np.asarray(y_true)[selected].mean()))
+    if not per_fold:
+        return {}
+    return {
+        "fold_precision_min": min(per_fold),
+        "fold_precision_max": max(per_fold),
+        "fold_precision_spread": max(per_fold) - min(per_fold),
+        "fold_precision_n": len(per_fold),
     }
 
 

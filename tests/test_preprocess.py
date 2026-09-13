@@ -169,3 +169,30 @@ def test_year_raw_survives_scaling(multi_year_df):
     assert train["year_raw"].max() < 2012 <= test["year_raw"].min()
     assert set(train["year_raw"]) <= {2000, 2004, 2008}
     assert "year_raw" not in FEATURE_COLUMNS, "raw year must not reach the model"
+
+
+def test_walk_forward_folds_do_not_overlap(multi_year_df):
+    """Each fold's training rows must predate its own validation window."""
+    from src.train import build_walk_forward_folds
+
+    train, _test, _ = prepare_datasets(
+        multi_year_df, split_strategy="temporal", holdout_from=2012
+    )
+    folds = build_walk_forward_folds(
+        train, window=4, n_folds=3, min_val_rows=5, min_fit_rows=5
+    )
+    assert folds, "fixture should yield at least one fold"
+    for lo, hi, fit, val in folds:
+        assert val["year_raw"].between(lo, hi).all()
+        assert (fit["year_raw"] < lo).all(), "fit window must precede validation"
+
+
+def test_walk_forward_stops_when_history_runs_out(multi_year_df):
+    """Folds must not be produced from slices too small to be informative."""
+    from src.train import build_walk_forward_folds
+
+    train, _test, _ = prepare_datasets(
+        multi_year_df, split_strategy="temporal", holdout_from=2012
+    )
+    with pytest.raises(ValueError, match="no usable walk-forward folds"):
+        build_walk_forward_folds(train, window=4, n_folds=3)

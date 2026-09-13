@@ -23,6 +23,8 @@ from src.evaluate import (
     choose_threshold,
     evaluate_model,
     feature_importances,
+    pool_fold_predictions,
+    threshold_stability,
 )
 from src.preprocess import FEATURE_COLUMNS, features_target, load_raw, prepare_datasets
 
@@ -52,6 +54,43 @@ def build_model(model_type: str, params: dict, random_state: int):
     return MODEL_BUILDERS[model_type](**params)
 
 
+def build_walk_forward_folds(
+    train,
+    window: int,
+    n_folds: int,
+    min_val_rows: int = 1000,
+    min_fit_rows: int = 10000,
+) -> list[tuple[int, int, "pd.DataFrame", "pd.DataFrame"]]:
+    """Carve consecutive out-of-sample windows from the end of training data.
+
+    Fold i covers the ``window`` years ending ``window * i`` years before the
+    training boundary, and is scored by a model fit only on rows older than
+    that window. Returns (start_year, end_year, fit_part, val_part) tuples,
+    newest first, stopping once a fold falls below ``min_val_rows`` (too few
+    rows to estimate precision) or ``min_fit_rows`` (too little history to
+    fit a model comparable to the real one). The defaults suit the full
+    dataset; tests lower them.
+    """
+    latest = int(train["year_raw"].max())
+    folds = []
+    for i in range(n_folds):
+        hi = latest - window * i
+        lo = hi - window + 1
+        val = train[(train["year_raw"] >= lo) & (train["year_raw"] <= hi)]
+        fit = train[train["year_raw"] < lo]
+        # A fold needs both enough validation rows to estimate precision and
+        # enough history behind it to fit a comparable model.
+        if len(val) < min_val_rows or len(fit) < min_fit_rows:
+            break
+        folds.append((lo, hi, fit, val))
+    if not folds:
+        raise ValueError(
+            "no usable walk-forward folds -- lower validation_years or "
+            "validation_folds"
+        )
+    return folds
+
+
 def run_experiments(config: dict, only: str | None = None) -> dict:
     data_cfg = config["data"]
     mlflow.set_tracking_uri(config["mlflow"]["tracking_uri"])
@@ -72,31 +111,27 @@ def run_experiments(config: dict, only: str | None = None) -> dict:
     # in-train Games mimics the real gap between fitting and deploying.
     target_precision = data_cfg.get("target_precision")
     if target_precision is not None and split_strategy == "temporal":
-        # Span a full Olympiad, not just the last Games. The most recent
-        # Games inside the training range is 2010 -- Winter only, 4.4k rows
-        # -- and a threshold tuned on Winter alone transfers badly to a
-        # Summer-dominated holdout. Four years captures one of each.
+        # Each fold spans a full Olympiad rather than a single Games: the
+        # most recent Games inside the training range is 2010, Winter-only
+        # and 4.4k rows, and a threshold tuned on Winter alone transfers
+        # badly to a Summer-dominated holdout. Four years captures one of
+        # each.
         window = int(data_cfg.get("validation_years", 4))
-        # year_raw, not year -- the latter is standardized by this point.
-        val_from = int(train["year_raw"].max()) - window + 1
-        fit_mask = train["year_raw"] < val_from
-        fit_part, val_part = train[fit_mask], train[~fit_mask]
-        seasons = sorted(val_part["season"].unique())
+        # Multiple walk-forward folds, not one. A threshold picked on the
+        # single most recent window is tuned to one era transition and
+        # arrives optimistic -- asking for 0.60 precision delivered 0.569 on
+        # the holdout. Pooling several past transitions averages over drift.
+        n_folds = int(data_cfg.get("validation_folds", 3))
+        folds = build_walk_forward_folds(train, window, n_folds)
         print(
-            f"Threshold tuning: fit on {len(fit_part)} rows (< {val_from}), "
-            f"validate on {len(val_part)} rows ({val_from}-"
-            f"{int(train['year_raw'].max())}, "
-            f"{len(sorted(val_part['year_raw'].unique()))} Games, "
-            f"{len(seasons)} season(s))"
-        )
-        if val_part.empty:
-            raise ValueError(
-                f"validation_years={window} leaves no rows to tune the "
-                "threshold on"
+            f"Threshold tuning: {len(folds)} walk-forward fold(s), "
+            f"{window}-year windows -- "
+            + ", ".join(
+                f"{lo}-{hi} ({len(v)} rows)" for lo, hi, _f, v in folds
             )
+        )
     else:
-        fit_part = val_part = None
-        val_from = None
+        folds = []
 
     X_train, y_train = features_target(train)
     X_test, y_test = features_target(test)
@@ -125,18 +160,26 @@ def run_experiments(config: dict, only: str | None = None) -> dict:
             )
 
             threshold, threshold_info = DEFAULT_THRESHOLD, {}
-            if val_part is not None:
-                # Fit on the earlier slice only, so the validation Games are
-                # genuinely unseen when the threshold is picked.
-                probe = build_model(
-                    exp["model"], exp.get("params"), data_cfg["random_state"]
-                )
-                Xf, yf = features_target(fit_part)
-                Xv, yv = features_target(val_part)
-                probe.fit(Xf, yf)
+            if folds:
+                # One probe per fold, each fit only on rows older than its
+                # own window, so every validation window is genuinely unseen.
+                scored = []
+                for _lo, _hi, fit_part, val_part in folds:
+                    probe = build_model(
+                        exp["model"], exp.get("params"), data_cfg["random_state"]
+                    )
+                    Xf, yf = features_target(fit_part)
+                    Xv, yv = features_target(val_part)
+                    probe.fit(Xf, yf)
+                    scored.append((yv, probe.predict_proba(Xv)[:, 1]))
+                y_pool, proba_pool = pool_fold_predictions(scored)
                 threshold, threshold_info = choose_threshold(
-                    yv, probe.predict_proba(Xv)[:, 1], target_precision
+                    y_pool, proba_pool, target_precision
                 )
+                threshold_info["n_folds"] = len(folds)
+                threshold_info["n_val_rows"] = int(len(y_pool))
+                # What each past transition actually delivered at this cut.
+                threshold_info.update(threshold_stability(scored, threshold))
 
             # Final model sees all training rows, including the validation
             # Games; only the threshold came from the probe.
@@ -152,7 +195,10 @@ def run_experiments(config: dict, only: str | None = None) -> dict:
             mlflow.log_param("n_train_rows", len(X_train))
             mlflow.log_param("n_test_rows", len(X_test))
             mlflow.log_param("split_strategy", split_strategy)
-            mlflow.log_param("threshold_tuned_on", val_from)
+            mlflow.log_param(
+                "threshold_tuned_on",
+                ";".join(f"{lo}-{hi}" for lo, hi, _f, _v in folds) or None,
+            )
             for key, value in threshold_info.items():
                 mlflow.log_param(f"threshold_{key}", value)
             mlflow.log_param("holdout_from", holdout_from if split_strategy == "temporal" else None)
@@ -200,13 +246,17 @@ def save_best(best: dict, artifacts: dict, config: dict) -> None:
             ),
         },
     }
-    joblib.dump(bundle, model_dir / "model_bundle.joblib")
+    # compress=3 trades a few seconds of load time for roughly a 3x smaller
+    # file. An uncompressed random forest bundle runs to hundreds of MB,
+    # which is awkward to move and impossible to put in a container image.
+    joblib.dump(bundle, model_dir / "model_bundle.joblib", compress=3)
     with open(model_dir / "metadata.json", "w", encoding="utf-8") as fh:
         json.dump(bundle["metadata"], fh, indent=2)
+    size_mb = (model_dir / "model_bundle.joblib").stat().st_size / 1e6
     print(
         f"\nBest model: {best['name']} ({best['model_type']}) "
         f"{SELECTION_METRIC}={best['metrics'][SELECTION_METRIC]:.4f} "
-        f"-> {model_dir / 'model_bundle.joblib'}"
+        f"-> {model_dir / 'model_bundle.joblib'} ({size_mb:.0f} MB)"
     )
 
 

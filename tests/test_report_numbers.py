@@ -39,3 +39,13 @@ def test_agg_rejects_empty():
     """An empty metric column is a bug upstream, not something to paper over."""
     with pytest.raises(Exception):
         _agg([])
+
+
+def test_table_renders_all_missing_column_without_crashing():
+    """A metric undefined for an entire row must render, not raise."""
+    df = pd.DataFrame(
+        {"g": ["a", "a"], "defined": [1.0, 2.0], "absent": [float("nan")] * 2}
+    )
+    table = _table(df, ["g"], ["defined", "absent"])
+    assert "—" in table
+    assert "1.5000" in table
