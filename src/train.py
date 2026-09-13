@@ -18,7 +18,12 @@ import yaml
 from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 
-from src.evaluate import evaluate_model, feature_importances
+from src.evaluate import (
+    DEFAULT_THRESHOLD,
+    choose_threshold,
+    evaluate_model,
+    feature_importances,
+)
 from src.preprocess import FEATURE_COLUMNS, features_target, load_raw, prepare_datasets
 
 MODEL_BUILDERS = {
@@ -27,8 +32,10 @@ MODEL_BUILDERS = {
     "hist_gradient_boosting": HistGradientBoostingClassifier,
 }
 
-# Selection metric: robust to the ~15% medal-rate class imbalance.
-SELECTION_METRIC = "roc_auc"
+# Selection metric: average precision, scored against the ~15% base rate.
+# ROC-AUC stays high under this much imbalance even when precision is poor,
+# so it is still logged but no longer decides which model wins.
+SELECTION_METRIC = "pr_auc"
 
 
 def load_config(path: str) -> dict:
@@ -51,14 +58,57 @@ def run_experiments(config: dict, only: str | None = None) -> dict:
     mlflow.set_experiment(config["mlflow"]["experiment_name"])
 
     raw = load_raw(data_cfg["raw_path"])
+    split_strategy = data_cfg.get("split_strategy", "temporal")
+    holdout_from = data_cfg.get("holdout_from", 2012)
     train, test, artifacts = prepare_datasets(
-        raw, data_cfg["test_size"], data_cfg["random_state"]
+        raw,
+        data_cfg["test_size"],
+        data_cfg["random_state"],
+        split_strategy=split_strategy,
+        holdout_from=holdout_from,
     )
+    # Carve the most recent Games in train as a threshold-tuning slice. The
+    # threshold must not be chosen on the test set, and using the latest
+    # in-train Games mimics the real gap between fitting and deploying.
+    target_precision = data_cfg.get("target_precision")
+    if target_precision is not None and split_strategy == "temporal":
+        # Span a full Olympiad, not just the last Games. The most recent
+        # Games inside the training range is 2010 -- Winter only, 4.4k rows
+        # -- and a threshold tuned on Winter alone transfers badly to a
+        # Summer-dominated holdout. Four years captures one of each.
+        window = int(data_cfg.get("validation_years", 4))
+        # year_raw, not year -- the latter is standardized by this point.
+        val_from = int(train["year_raw"].max()) - window + 1
+        fit_mask = train["year_raw"] < val_from
+        fit_part, val_part = train[fit_mask], train[~fit_mask]
+        seasons = sorted(val_part["season"].unique())
+        print(
+            f"Threshold tuning: fit on {len(fit_part)} rows (< {val_from}), "
+            f"validate on {len(val_part)} rows ({val_from}-"
+            f"{int(train['year_raw'].max())}, "
+            f"{len(sorted(val_part['year_raw'].unique()))} Games, "
+            f"{len(seasons)} season(s))"
+        )
+        if val_part.empty:
+            raise ValueError(
+                f"validation_years={window} leaves no rows to tune the "
+                "threshold on"
+            )
+    else:
+        fit_part = val_part = None
+        val_from = None
+
     X_train, y_train = features_target(train)
     X_test, y_test = features_target(test)
+    split_desc = (
+        f"temporal, holdout from {holdout_from}"
+        if split_strategy == "temporal"
+        else "grouped by athlete id"
+    )
     print(
         f"Data: {len(raw)} raw rows -> {len(train)} train / {len(test)} test "
-        f"(grouped by athlete id), medal rate {y_train.mean():.3f}"
+        f"({split_desc}), train medal rate {y_train.mean():.3f}, "
+        f"test medal rate {y_test.mean():.3f}"
     )
 
     experiments = config["experiments"]
@@ -73,8 +123,25 @@ def run_experiments(config: dict, only: str | None = None) -> dict:
             model = build_model(
                 exp["model"], exp.get("params"), data_cfg["random_state"]
             )
+
+            threshold, threshold_info = DEFAULT_THRESHOLD, {}
+            if val_part is not None:
+                # Fit on the earlier slice only, so the validation Games are
+                # genuinely unseen when the threshold is picked.
+                probe = build_model(
+                    exp["model"], exp.get("params"), data_cfg["random_state"]
+                )
+                Xf, yf = features_target(fit_part)
+                Xv, yv = features_target(val_part)
+                probe.fit(Xf, yf)
+                threshold, threshold_info = choose_threshold(
+                    yv, probe.predict_proba(Xv)[:, 1], target_precision
+                )
+
+            # Final model sees all training rows, including the validation
+            # Games; only the threshold came from the probe.
             model.fit(X_train, y_train)
-            metrics = evaluate_model(model, X_test, y_test)
+            metrics = evaluate_model(model, X_test, y_test, threshold=threshold)
 
             mlflow.log_param("model_type", exp["model"])
             mlflow.log_params(exp.get("params") or {})
@@ -84,6 +151,11 @@ def run_experiments(config: dict, only: str | None = None) -> dict:
             mlflow.log_param("random_state", data_cfg["random_state"])
             mlflow.log_param("n_train_rows", len(X_train))
             mlflow.log_param("n_test_rows", len(X_test))
+            mlflow.log_param("split_strategy", split_strategy)
+            mlflow.log_param("threshold_tuned_on", val_from)
+            for key, value in threshold_info.items():
+                mlflow.log_param(f"threshold_{key}", value)
+            mlflow.log_param("holdout_from", holdout_from if split_strategy == "temporal" else None)
             mlflow.log_metrics(metrics)
             mlflow.sklearn.log_model(model, name="model")
 
@@ -93,6 +165,8 @@ def run_experiments(config: dict, only: str | None = None) -> dict:
                 "model_type": exp["model"],
                 "params": exp.get("params") or {},
                 "metrics": metrics,
+                "threshold": threshold,
+                "threshold_info": threshold_info,
                 "run_id": run.info.run_id,
                 "model": model,
             }
@@ -119,6 +193,8 @@ def save_best(best: dict, artifacts: dict, config: dict) -> None:
             "metrics": best["metrics"],
             "run_id": best["run_id"],
             "selection_metric": SELECTION_METRIC,
+            "decision_threshold": best.get("threshold", 0.5),
+            "threshold_info": best.get("threshold_info", {}),
             "feature_importances": feature_importances(
                 best["model"], FEATURE_COLUMNS
             ),

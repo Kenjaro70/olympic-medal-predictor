@@ -3,13 +3,18 @@
 import numpy as np
 import pandas as pd
 
+import pytest
+
 from src.preprocess import (
     FEATURE_COLUMNS,
+    MISSING_FLAG_COLUMNS,
+    add_entry_size_features,
     clean,
     encode_categoricals,
     impute_missing,
     prepare_datasets,
     scale_features,
+    split_by_year,
 )
 
 
@@ -81,3 +86,86 @@ def test_prepare_datasets_keeps_athletes_separate(raw_df):
     assert {"medians", "encoders", "scaler"} <= set(artifacts)
     assert not train[FEATURE_COLUMNS].isna().any().any()
     assert not test[FEATURE_COLUMNS].isna().any().any()
+
+
+# --- missingness flags -------------------------------------------------
+
+
+def test_clean_flags_missing_measurements_before_imputation(raw_df):
+    cleaned = clean(raw_df)
+    for col in ("height", "weight"):
+        flag = cleaned[f"{col}_missing"]
+        assert set(flag.unique()) <= {0, 1}
+        # The flag must record the ORIGINAL gaps, not post-imputation state.
+        assert (flag == cleaned[col].isna().astype(int)).all()
+    assert cleaned["height_missing"].sum() > 0, "fixture should contain gaps"
+
+
+def test_missing_flags_survive_imputation(raw_df):
+    cleaned = clean(raw_df)
+    imputed, _ = impute_missing(cleaned)
+    assert not imputed["height"].isna().any()
+    # Imputation fills the value but must not erase the evidence.
+    assert imputed["height_missing"].sum() == cleaned["height_missing"].sum()
+
+
+def test_missing_flags_are_model_features():
+    assert set(MISSING_FLAG_COLUMNS) <= set(FEATURE_COLUMNS)
+
+
+# --- entry size features -----------------------------------------------
+
+
+def test_entry_size_counts_roster_and_field(raw_df):
+    sized = add_entry_size_features(raw_df)
+    grouped = raw_df.groupby(["games", "event"]).size()
+    for (games, event), expected in grouped.items():
+        rows = sized[(sized["games"] == games) & (sized["event"] == event)]
+        assert (rows["field_size"] == expected).all()
+    assert (sized["team_size"] <= sized["field_size"]).all()
+
+
+# --- temporal split ----------------------------------------------------
+
+
+def test_split_by_year_is_chronological(multi_year_df):
+    cleaned = clean(multi_year_df)
+    train, test = split_by_year(cleaned, holdout_from=2012)
+    assert train["year"].max() < 2012
+    assert test["year"].min() >= 2012
+    assert len(train) + len(test) == len(cleaned)
+
+
+def test_split_by_year_rejects_empty_holdout(multi_year_df):
+    cleaned = clean(multi_year_df)
+    with pytest.raises(ValueError, match="empty split"):
+        split_by_year(cleaned, holdout_from=3000)
+
+
+def test_prepare_datasets_temporal_has_no_future_in_train(multi_year_df):
+    train, test, artifacts = prepare_datasets(
+        multi_year_df, split_strategy="temporal", holdout_from=2012
+    )
+    # ``year`` is a feature column, so it arrives standardized here. The
+    # scaler is monotonic and fitted once, so the ordering still proves the
+    # holdout is strictly in the future.
+    assert train["year"].max() < test["year"].min()
+    assert artifacts["split_strategy"] == "temporal"
+    assert artifacts["holdout_from"] == 2012
+    assert not train[FEATURE_COLUMNS].isna().any().any()
+    assert not test[FEATURE_COLUMNS].isna().any().any()
+
+
+def test_prepare_datasets_rejects_unknown_strategy(raw_df):
+    with pytest.raises(ValueError, match="Unknown split_strategy"):
+        prepare_datasets(raw_df, split_strategy="nonsense")
+
+
+def test_year_raw_survives_scaling(multi_year_df):
+    """The calendar year must stay readable after ``year`` is standardized."""
+    train, test, _ = prepare_datasets(
+        multi_year_df, split_strategy="temporal", holdout_from=2012
+    )
+    assert train["year_raw"].max() < 2012 <= test["year_raw"].min()
+    assert set(train["year_raw"]) <= {2000, 2004, 2008}
+    assert "year_raw" not in FEATURE_COLUMNS, "raw year must not reach the model"

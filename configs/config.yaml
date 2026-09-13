@@ -6,6 +6,18 @@ data:
   description: "120 years of Olympic history (athlete_events), TidyTuesday 2021-07-27 mirror, 271,116 rows"
   test_size: 0.2
   random_state: 42
+  # "temporal" trains on <= holdout_from - 1 and tests on the rest -- the
+  # honest setup for a forward-looking predictor. "athlete" keeps the old
+  # grouped random split for comparison.
+  split_strategy: temporal
+  holdout_from: 2012
+  # Operating point. The threshold is tuned on the latest Games inside the
+  # training range (never on the test set) to maximize recall subject to
+  # precision >= this value. Comment out to score at a plain 0.5 cut.
+  target_precision: 0.6
+  # Width of the tuning slice, in calendar years back from the end of the
+  # training range. 4 spans one Olympiad so both seasons are represented.
+  validation_years: 4
 
 mlflow:
   tracking_uri: sqlite:///mlflow.db

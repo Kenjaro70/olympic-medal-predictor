@@ -126,6 +126,13 @@ all runs and print the winner.
 
 ## Results
 
+> **Headline: PR-AUC 0.440 on a 2012-2016 holdout (3.04x the 14.5% base rate).**
+> An earlier version of this README reported ROC-AUC 0.853 on an
+> athlete-grouped random split. That split was too easy -- see
+> [Honest evaluation](#honest-evaluation) below and
+> [`reports/leakage_ablation.md`](reports/leakage_ablation.md). The table in
+> this section is the old athlete-split result, kept for comparison.
+
 Test-set metrics (20% held-out, grouped by athlete; base rate 14.7%):
 
 | run | model | accuracy | precision | recall | f1 | roc_auc |
@@ -154,6 +161,78 @@ often. Demographics (age/height/weight) add only modest lift, which makes
 sense: within elite athletes, body metrics don't separate medalists well. The
 model predicts *base rates for an athlete profile*, not individual talent —
 the LLM layer states this caveat in every answer.
+
+### Honest evaluation
+
+The athlete-grouped split closes athlete leakage but still lets the model train
+on 2016 to predict 1924. The medal rate itself drifts -- 37.6% in the 1890s down
+to ~14% from the 1960s on -- so a random slice of all eras rewards interpolating
+a trend that real use requires extrapolating. The default split is now
+**temporal**: train on <= 2008, test on 2012-2016.
+
+Same model (`rf_deep`), four runs, one variable at a time:
+
+| split | features | PR-AUC | lift vs base | ROC-AUC | F1 |
+|---|---|---|---|---|---|
+| athlete | original | 0.5744 | 3.89x | 0.8489 | 0.5242 |
+| athlete | + size & missingness | 0.7175 | 4.85x | 0.8927 | 0.6383 |
+| temporal | original | 0.3893 | 2.69x | 0.7637 | 0.3333 |
+| **temporal** | **+ size & missingness** | **0.4396** | **3.04x** | 0.7913 | 0.3702 |
+
+Moving to a temporal holdout costs 0.185 PR-AUC -- the old headline was inflated
+by roughly 47%. Two features were added to stop the model absorbing opportunity
+as skill:
+
+- **`field_size` / `team_size`** -- a team gold produces one medal row per
+  athlete (up to 38 for one 1908 gymnastics result), and events with <=8
+  entrants medal at 55% vs 12% for fields of 50-100. Together these rank second
+  and fifth in importance (0.150 and 0.099).
+- **`height_missing` / `weight_missing`** -- whether a measurement was recorded
+  is era-driven (corr with year -0.65), and within a decade a missing value
+  tracks a much lower medal rate (1980s: 15.4% present vs 2.6% missing).
+  Honest caveat: the tree ranks both flags last, because `year` already lets it
+  reconstruct most of the effect. Kept for explicitness, not for lift.
+
+**Metric change:** selection is now `pr_auc`, not `roc_auc`. At a 14.5% base
+rate a model that never predicts "medal" scores 85.5% accuracy, and ROC-AUC
+stays flattering under imbalance. `pr_auc_lift` (PR-AUC / base rate) is logged
+alongside so a value near 1.0 reads immediately as "learned nothing".
+
+Set `data.split_strategy: athlete` in `configs/config.yaml` to reproduce the
+older numbers.
+
+### Operating point
+
+The app reports a probability, but any yes/no call needs a cut, and a bare 0.5
+is an arbitrary one. `data.target_precision` in `configs/config.yaml` tunes it:
+the pipeline picks the threshold that **maximizes recall subject to precision >=
+the target**.
+
+The threshold is chosen on a validation slice carved from the *end of the
+training range* -- never on the test set, since tuning on the data you report is
+leakage even when the model itself was fit honestly. The slice spans four
+calendar years (`validation_years`) rather than the last Games alone: the most
+recent Games inside the training range is 2010, which is Winter-only and just
+4.4k rows, and a threshold tuned on Winter transfers badly to a Summer-dominated
+holdout. A four-year window covers 2008 + 2010 -- 18,004 rows, both seasons.
+
+`rf_deep` on the 2012-2016 holdout:
+
+| target precision | threshold | precision | recall | F1 |
+|---|---|---|---|---|
+| none (0.5 cut) | 0.5000 | 0.5395 | 0.2817 | 0.3702 |
+| 0.5 | 0.4369 | 0.4821 | 0.3635 | **0.4145** |
+| **0.6** (default) | 0.5406 | **0.5699** | 0.2379 | 0.3357 |
+| 0.7 | 0.6883 | 0.6448 | 0.1206 | 0.2032 |
+
+**The target is approximate, not a guarantee.** Precision on the validation
+slice hits the target almost exactly, but transfer to the holdout costs a few
+points -- asking for 0.70 delivers 0.645. The gap is drift between Olympiads,
+and it widens the harder you push. Treat the target as a dial, not a contract.
+
+Note `pr_auc` and `roc_auc` do not appear above: they are threshold-free and
+identical across every row. Moving the threshold cannot make the model rank
+better, only trade precision against recall along the curve it already has.
 
 ### Experiment tracking evidence
 
