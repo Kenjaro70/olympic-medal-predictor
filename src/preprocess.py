@@ -3,7 +3,7 @@
 Every fit-style function (impute_missing, encode_categoricals, scale_features)
 returns the fitted state alongside the transformed frame so the exact same
 transformation can be replayed on the test set and at inference time without
-re-fitting on unseen data (no leakage). All functions return copies and never
+re-fitting on unseen data (no train/test leakage). All functions return copies and never
 mutate the input dataframe.
 """
 
@@ -123,7 +123,7 @@ def split_by_year(
     scored on a random slice of all eras gets credit for interpolating a
     trend it would have to extrapolate in real use.
 
-    With the default cutoff this yields ~233.8k train rows (1896-2008) and
+    With the default cutoff this yields ~233.8k train rows (1896-2010) and
     ~31.5k test rows (2012-2016).
     """
     train = df[df["year"] < holdout_from].copy()

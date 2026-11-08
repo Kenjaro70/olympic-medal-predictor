@@ -31,7 +31,7 @@ model trained on 2016 to predict 1924. Real use requires predicting forward,
 and the medal rate drifts sharply over that span (37.6% in the 1890s down to
 ~14% from the 1960s on, as fields grew). A random slice of every era rewards
 interpolating a trend that deployment would force you to extrapolate. Scored
-the honest way — train on ≤ 2008, test on 2012–2016 — the same model loses
+the honest way — train on Games before 2012, test on 2012–2016 — the same model loses
 **0.164 PR-AUC**, meaning the old figure was inflated by **42%**.
 
 The metric changed too. At a 14.5% base rate, a model that never predicts
@@ -79,7 +79,7 @@ and `LLM_MODEL` overrides (see `.env.example`).
 ## Usage
 
 ```bash
-# 1. Train all 6 configured experiments (logs everything to MLflow)
+# 1. Train all 7 configured experiments (logs everything to MLflow)
 python -m src.train --config configs/config.yaml
 
 # 2. Compare runs and identify the best model programmatically
@@ -137,11 +137,19 @@ conversational answer with probability, context, and caveats
 median imputation for age/height/weight, binary encoding for sex/season, and
 target (medal-rate) encoding for the high-cardinality NOC and sport columns.
 All statistics are fit on the training split only and reapplied to test and
-inference data, so there is no leakage. The train/test split is **grouped by
-athlete id** so the same athlete never appears on both sides.
+inference data, so nothing from the test set leaks into training. The default
+split is **temporal** (train on Games before 2012, test on 2012–2016); an
+athlete-grouped split, where the same athlete never appears on both sides, is
+kept for comparison.
+
+One known gap: the medal-rate encoding is fit on all training rows, so each
+row's own label feeds its encoding, and the walk-forward windows used to tune
+the decision threshold are carved out after that fit. The 2012–2016 holdout is
+unaffected, but the threshold was likely tuned on slightly optimistic scores.
+The fix is out-of-fold encoding, refit inside each window.
 
 **Training** (`src/train.py`): reads all hyperparameters from
-`configs/config.yaml` — six configurations across three algorithms (logistic
+`configs/config.yaml` — seven configurations across three algorithms (logistic
 regression, random forest, histogram gradient boosting). Every run logs
 params, data description, nine metrics, and the model artifact to MLflow
 (SQLite backend). The best run by PR AUC is bundled with the preprocessing
@@ -209,7 +217,8 @@ The athlete-grouped split closes athlete leakage but still lets the model train
 on 2016 to predict 1924. The medal rate itself drifts -- 37.6% in the 1890s down
 to ~14% from the 1960s on -- so a random slice of all eras rewards interpolating
 a trend that real use requires extrapolating. The default split is now
-**temporal**: train on <= 2008, test on 2012-2016.
+**temporal**: train on everything before 2012 (through the 2010 Winter Games),
+test on 2012-2016.
 
 Same model (`rf_deep`), four runs, one variable at a time. These numbers are
 **generated, not transcribed** -- regenerate them with
@@ -231,7 +240,7 @@ absorbing opportunity as skill:
 
 - **`field_size` / `team_size`** -- a team gold produces one medal row per
   athlete (up to 38 for one 1908 gymnastics result), and events with <=8
-  entrants medal at 55% vs 12% for fields of 50-100. Together these rank second
+  entrants medal at 55% vs 12% for fields of 50-100. Together these rank
   **third and fourth** in importance (0.140 and 0.122), behind only country
   and sport medal rate.
 - **`height_missing` / `weight_missing`** -- whether a measurement was recorded
@@ -357,46 +366,82 @@ forms, so it is inspectable without retraining:
 pytest tests/ -v
 ```
 
-- `tests/test_preprocess.py` (6 tests): missing-value imputation, categorical
-  encoding incl. unseen categories, scaling, target construction, grouped
-  split, and input immutability.
+- `tests/test_preprocess.py` (17 tests): missing-value imputation, categorical
+  encoding incl. unseen categories, scaling, target construction, input
+  immutability, missing-measurement flags, field and team size, the temporal
+  split (no future rows in training), the grouped split, and walk-forward
+  validation windows.
 - `tests/test_model.py` (2 tests): prediction type/shape/probability sanity and
   a minimum ROC AUC threshold, trained on the committed `data/sample.csv`
   (10,000-row sample) so CI needs no full dataset or API key.
 - `tests/test_interface.py` (6 tests): feature extraction and normalization
   with an injected fake LLM, clarifying questions for incomplete input,
   out-of-scope refusal, and malformed-LLM-output recovery.
+- `tests/test_threshold.py` (11 tests): threshold selection against a
+  precision target, recall maximization among feasible thresholds, pooling of
+  walk-forward folds, and the fold-to-fold stability report.
+- `tests/test_report_numbers.py` (6 tests): mean ± spread formatting and table
+  building for the generated leakage-ablation report.
 
 The same command runs on every push in GitHub Actions
 ([workflow](.github/workflows/ci.yml) — see the CI badge at the top of this
 README for the latest result). Output of `pytest tests/ -v` on a clean run:
 
 <details>
-<summary>pytest tests/ -v — 14 passed</summary>
+<summary>pytest tests/ -v — 42 passed</summary>
 
 ```text
-============================= test session starts =============================
-platform win32 -- Python 3.13.9, pytest-9.1.1, pluggy-1.6.0
+============================= test session starts ==============================
+platform linux -- Python 3.13.18, pytest-9.1.1, pluggy-1.7.0
 rootdir: olympic-medal-predictor
 configfile: pytest.ini
-collected 14 items
+plugins: anyio-4.16.0
+collecting ... collected 42 items
 
-tests/test_interface.py::test_parse_query_extracts_and_normalizes_features PASSED [  7%]
-tests/test_interface.py::test_incomplete_input_triggers_clarifying_question PASSED [ 14%]
-tests/test_interface.py::test_out_of_scope_query_is_declined PASSED      [ 21%]
-tests/test_interface.py::test_garbage_llm_output_handled_gracefully PASSED [ 28%]
-tests/test_interface.py::test_extract_json_tolerates_code_fences PASSED  [ 35%]
-tests/test_interface.py::test_normalize_rejects_invalid_values PASSED    [ 42%]
-tests/test_model.py::test_predictions_have_correct_type_and_shape PASSED [ 50%]
-tests/test_model.py::test_model_meets_minimum_performance PASSED         [ 57%]
-tests/test_preprocess.py::test_clean_builds_binary_target PASSED         [ 64%]
-tests/test_preprocess.py::test_impute_fills_all_missing_values PASSED    [ 71%]
-tests/test_preprocess.py::test_encode_categoricals_maps_and_handles_unseen PASSED [ 78%]
-tests/test_preprocess.py::test_scale_features_standardizes PASSED        [ 85%]
-tests/test_preprocess.py::test_functions_do_not_mutate_input PASSED      [ 92%]
-tests/test_preprocess.py::test_prepare_datasets_keeps_athletes_separate PASSED [100%]
+tests/test_interface.py::test_parse_query_extracts_and_normalizes_features PASSED [  2%]
+tests/test_interface.py::test_incomplete_input_triggers_clarifying_question PASSED [  4%]
+tests/test_interface.py::test_out_of_scope_query_is_declined PASSED      [  7%]
+tests/test_interface.py::test_garbage_llm_output_handled_gracefully PASSED [  9%]
+tests/test_interface.py::test_extract_json_tolerates_code_fences PASSED  [ 11%]
+tests/test_interface.py::test_normalize_rejects_invalid_values PASSED    [ 14%]
+tests/test_model.py::test_predictions_have_correct_type_and_shape PASSED [ 16%]
+tests/test_model.py::test_model_meets_minimum_performance PASSED         [ 19%]
+tests/test_preprocess.py::test_clean_builds_binary_target PASSED         [ 21%]
+tests/test_preprocess.py::test_impute_fills_all_missing_values PASSED    [ 23%]
+tests/test_preprocess.py::test_encode_categoricals_maps_and_handles_unseen PASSED [ 26%]
+tests/test_preprocess.py::test_scale_features_standardizes PASSED        [ 28%]
+tests/test_preprocess.py::test_functions_do_not_mutate_input PASSED      [ 30%]
+tests/test_preprocess.py::test_prepare_datasets_keeps_athletes_separate PASSED [ 33%]
+tests/test_preprocess.py::test_clean_flags_missing_measurements_before_imputation PASSED [ 35%]
+tests/test_preprocess.py::test_missing_flags_survive_imputation PASSED   [ 38%]
+tests/test_preprocess.py::test_missing_flags_are_model_features PASSED   [ 40%]
+tests/test_preprocess.py::test_entry_size_counts_roster_and_field PASSED [ 42%]
+tests/test_preprocess.py::test_split_by_year_is_chronological PASSED     [ 45%]
+tests/test_preprocess.py::test_split_by_year_rejects_empty_holdout PASSED [ 47%]
+tests/test_preprocess.py::test_prepare_datasets_temporal_has_no_future_in_train PASSED [ 50%]
+tests/test_preprocess.py::test_prepare_datasets_rejects_unknown_strategy PASSED [ 52%]
+tests/test_preprocess.py::test_year_raw_survives_scaling PASSED          [ 54%]
+tests/test_preprocess.py::test_walk_forward_folds_do_not_overlap PASSED  [ 57%]
+tests/test_preprocess.py::test_walk_forward_stops_when_history_runs_out PASSED [ 59%]
+tests/test_report_numbers.py::test_single_seed_reports_bare_value PASSED [ 61%]
+tests/test_report_numbers.py::test_multiple_seeds_report_mean_and_spread PASSED [ 64%]
+tests/test_report_numbers.py::test_table_groups_seeds_into_one_row PASSED [ 66%]
+tests/test_report_numbers.py::test_table_tolerates_missing_metric PASSED [ 69%]
+tests/test_report_numbers.py::test_agg_rejects_empty PASSED              [ 71%]
+tests/test_report_numbers.py::test_table_renders_all_missing_column_without_crashing PASSED [ 73%]
+tests/test_threshold.py::test_threshold_meets_precision_target PASSED    [ 76%]
+tests/test_threshold.py::test_higher_target_precision_is_never_looser PASSED [ 78%]
+tests/test_threshold.py::test_unreachable_target_is_reported_not_silently_accepted PASSED [ 80%]
+tests/test_threshold.py::test_maximizes_recall_among_feasible_points PASSED [ 83%]
+tests/test_threshold.py::test_evaluate_model_respects_threshold PASSED   [ 85%]
+tests/test_threshold.py::test_evaluate_model_defaults_to_half PASSED     [ 88%]
+tests/test_threshold.py::test_pooling_folds_concatenates_in_order PASSED [ 90%]
+tests/test_threshold.py::test_pooling_rejects_no_folds PASSED            [ 92%]
+tests/test_threshold.py::test_stability_reports_spread_across_folds PASSED [ 95%]
+tests/test_threshold.py::test_stability_skips_folds_selecting_nothing PASSED [ 97%]
+tests/test_threshold.py::test_stability_with_no_usable_fold_is_empty PASSED [100%]
 
-============================= 14 passed in 9.70s ==============================
+============================== 42 passed in 1.79s ==============================
 ```
 
 </details>
